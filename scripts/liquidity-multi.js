@@ -7,7 +7,6 @@ const axios = require('axios');
 const RPC_URL = 'https://testnet-rpc.monad.xyz/';
 const EXPLORER_URL = 'https://testnet.monadexplorer.com/tx/';
 const WMON_CONTRACT = '0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701';
-const USDC_CONTRACT = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'; // USDC на Monad тестнеті
 const UNISWAP_ROUTER = '0x5615CDAb10dc425a742d643d949a7F474C01abc4'; // Uniswap Router на Monad тестнеті
 const gasLimit = 800000;
 
@@ -93,43 +92,38 @@ async function approveToken(wallet, tokenAddress, spenderAddress, amount) {
   }
 }
 
-// Функція для додавання ліквідності WMON/USDC на Uniswap
-async function addLiquidityUniswap(wallet, wmonAmount, usdcAmount) {
+// Функція для додавання ліквідності в пул WMON/ETH на Uniswap
+async function addLiquidityWMONETH(wallet, wmonAmount, ethAmount) {
   try {
     console.log(
-      `🔄 Adding liquidity to Uniswap: ${ethers.utils.formatEther(wmonAmount)} WMON and ${ethers.utils.formatUnits(usdcAmount, 6)} USDC...`.magenta
+      `🔄 Adding liquidity to Uniswap: ${ethers.utils.formatEther(wmonAmount)} WMON and ${ethers.utils.formatEther(ethAmount)} MON...`.magenta
     );
 
     // Спочатку надаємо дозвіл на використання WMON
     await approveToken(wallet, WMON_CONTRACT, UNISWAP_ROUTER, wmonAmount);
     
-    // Надаємо дозвіл на використання USDC
-    await approveToken(wallet, USDC_CONTRACT, UNISWAP_ROUTER, usdcAmount);
-
     // Додаємо ліквідність
     const uniswapRouter = new ethers.Contract(
       UNISWAP_ROUTER,
       [
-        'function addLiquidity(address tokenA, address tokenB, uint amountADesired, uint amountBDesired, uint amountAMin, uint amountBMin, address to, uint deadline) external returns (uint amountA, uint amountB, uint liquidity)',
+        'function addLiquidityETH(address token, uint amountTokenDesired, uint amountTokenMin, uint amountETHMin, address to, uint deadline) external payable returns (uint amountToken, uint amountETH, uint liquidity)',
       ],
       wallet
     );
 
     const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 хвилин
     const slippage = 50; // 0.5%
-    const amountAMin = wmonAmount.mul(10000 - slippage).div(10000);
-    const amountBMin = usdcAmount.mul(10000 - slippage).div(10000);
+    const amountTokenMin = wmonAmount.mul(10000 - slippage).div(10000);
+    const amountETHMin = ethAmount.mul(10000 - slippage).div(10000);
 
-    const tx = await uniswapRouter.addLiquidity(
+    const tx = await uniswapRouter.addLiquidityETH(
       WMON_CONTRACT,
-      USDC_CONTRACT,
       wmonAmount,
-      usdcAmount,
-      amountAMin,
-      amountBMin,
+      amountTokenMin,
+      amountETHMin,
       wallet.address,
       deadline,
-      { gasLimit }
+      { value: ethAmount, gasLimit }
     );
 
     console.log(`✔️  Liquidity added successfully`.green.underline);
@@ -147,32 +141,26 @@ async function runLiquidityProvision(wallet) {
   try {
     console.log(`Starting liquidity provision operation:`.magenta);
     
-    // Отримуємо випадкову суму MON для обгортання
-    const monAmount = getRandomAmount();
+    // Отримуємо випадкову суму MON для обгортання в WMON
+    const wmonAmount = getRandomAmount();
     
-    // Обгортаємо MON в WMON
-    await wrapMON(wallet, monAmount);
+    // Отримуємо випадкову суму MON для додавання як ETH
+    const ethAmount = getRandomAmount();
     
-    // Отримуємо баланс USDC
-    const usdcContract = new ethers.Contract(
-      USDC_CONTRACT,
-      ['function balanceOf(address account) external view returns (uint256)'],
-      wallet
-    );
+    // Перевіряємо, чи достатньо MON на балансі
+    const balance = await wallet.getBalance();
+    const requiredBalance = wmonAmount.add(ethAmount).add(ethers.utils.parseEther('0.01')); // Додаємо 0.01 MON для газу
     
-    const usdcBalance = await usdcContract.balanceOf(wallet.address);
-    
-    // Якщо баланс USDC недостатній, виводимо повідомлення
-    if (usdcBalance.lt(ethers.utils.parseUnits('1', 6))) { // Мінімум 1 USDC
-      console.log(`❌ Insufficient USDC balance. Please get USDC from a faucet.`.red);
+    if (balance.lt(requiredBalance)) {
+      console.log(`❌ Insufficient MON balance. Required: ${ethers.utils.formatEther(requiredBalance)} MON, Available: ${ethers.utils.formatEther(balance)} MON`.red);
       return false;
     }
     
-    // Використовуємо половину балансу USDC для додавання ліквідності
-    const usdcAmount = usdcBalance.div(2);
+    // Обгортаємо MON в WMON
+    await wrapMON(wallet, wmonAmount);
     
-    // Додаємо ліквідність на Uniswap
-    await addLiquidityUniswap(wallet, monAmount, usdcAmount);
+    // Додаємо ліквідність WMON/ETH
+    await addLiquidityWMONETH(wallet, wmonAmount, ethAmount);
     
     console.log(`Liquidity provision operation completed`.green);
     return true;

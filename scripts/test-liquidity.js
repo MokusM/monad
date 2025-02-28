@@ -1,17 +1,34 @@
 require('dotenv').config();
 const { ethers } = require('ethers');
 const colors = require('colors');
+const fs = require('fs');
 const { runLiquidityProvision } = require('./liquidity-multi');
 
 const RPC_URL = 'https://testnet-rpc.monad.xyz/';
-const USDC_CONTRACT = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
 
 async function main() {
   try {
     console.log('Starting liquidity provision test...'.cyan);
     
-    // Використовуємо тестовий приватний ключ (замініть на свій)
-    const privateKey = '0x0000000000000000000000000000000000000000000000000000000000000000'; // Замініть на свій приватний ключ
+    // Читаємо перший приватний ключ з файлу wallet.txt
+    let privateKey;
+    try {
+      const wallets = fs
+        .readFileSync('wallet.txt', 'utf8')
+        .split('\n')
+        .filter(Boolean);
+      
+      if (wallets.length === 0) {
+        console.error('❌ No private keys found in wallet.txt'.red);
+        return;
+      }
+      
+      privateKey = wallets[0].trim();
+      console.log('✅ Successfully loaded private key from wallet.txt'.green);
+    } catch (error) {
+      console.error('❌ Error reading wallet.txt:'.red, error.message);
+      return;
+    }
     
     const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(privateKey, provider);
@@ -22,24 +39,9 @@ async function main() {
     const monBalance = await provider.getBalance(wallet.address);
     console.log(`MON Balance: ${ethers.utils.formatEther(monBalance)} MON`.green);
     
-    // Перевіряємо баланс USDC
-    const usdcContract = new ethers.Contract(
-      USDC_CONTRACT,
-      ['function balanceOf(address account) external view returns (uint256)'],
-      wallet
-    );
-    
-    const usdcBalance = await usdcContract.balanceOf(wallet.address);
-    console.log(`USDC Balance: ${ethers.utils.formatUnits(usdcBalance, 6)} USDC`.green);
-    
     // Перевіряємо, чи достатньо коштів для операції
-    if (monBalance.lt(ethers.utils.parseEther('0.01'))) {
+    if (monBalance.lt(ethers.utils.parseEther('0.03'))) { // Мінімум 0.03 MON (0.01 для WMON, 0.01 для ETH, 0.01 для газу)
       console.log('❌ Insufficient MON balance. Please get MON from a faucet.'.red);
-      return;
-    }
-    
-    if (usdcBalance.lt(ethers.utils.parseUnits('1', 6))) {
-      console.log('❌ Insufficient USDC balance. Please get USDC from a faucet.'.red);
       return;
     }
     
