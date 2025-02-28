@@ -1,52 +1,88 @@
-# Monad Testnet AIO
+# Monad Testnet Interaction Scripts
 
-Monad Testnet bot. Multi-account and proxy supported. Automatically checks wallet balances and runs modules in random order.
+Цей репозиторій містить набір скриптів для взаємодії з різними протоколами на тестовій мережі Monad.
 
-## Installation
+## Встановлення
 
-1. Clone the Repository
-
-Clone this repository to your local machine using the following command:
-
+1. Клонуйте репозиторій:
 ```bash
-git clone https://github.com/Zaptovcavis/monad-testnet.git
-cd monad-testnet
+git clone https://github.com/MokusM/monad.git
+cd monad
 ```
 
-2. Install the required dependencies:
-
-   ```bash
-   npm install
-   ```
-
-## Configuration
-
-1.  **Add Private keys to `wallet.txt`**
-    - Each private key should be on a new line
-    - Do not include the "0x" prefix
-
-2. **Add proxy to `proxy.txt`** file
-    - Each proxy should be on a new line
-    - Format: http://username:password@host:port
-
-## Features
-
-- **Balance Check**: Automatically checks wallet balances and skips wallets with less than 1 MON
-- **Random Module Order**: Runs all modules (Rubic, Magma, Izumi, aPriori) in random order for each wallet
-- **Multi-Account Support**: Processes multiple wallets with different proxies
-- **Error Handling**: Continues processing other wallets if one fails
-
-## Usage
-
-To run the bot, use the following command:
-
+2. Встановіть залежності:
 ```bash
-npm start
+npm install
 ```
 
-The bot will:
-1. Check the balance of each wallet
-2. Skip wallets with less than 1 MON
-3. For each valid wallet, run all modules (Rubic, Magma, Izumi, aPriori) in random order
-4. Display detailed logs of all operations
+3. Створіть файли конфігурації:
+   - `wallet.txt` - список приватних ключів (по одному на рядок)
+   - `proxy.txt` - список проксі (по одному на рядок)
+
+## Доступні модулі
+
+### 1. Rubic
+Модуль для взаємодії з протоколом Rubic на Monad тестнеті.
+
+```bash
+node scripts/rubic-multi.js
+```
+
+### 2. Magma
+Модуль для взаємодії з протоколом Magma на Monad тестнеті.
+
+```bash
+node scripts/magma-multi.js
+```
+
+### 3. Izumi
+Модуль для взаємодії з протоколом Izumi на Monad тестнеті.
+
+```bash
+node scripts/izumi-multi.js
+```
+
+### 4. aPriori
+Модуль для стейкінгу MON токенів в протоколі aPriori на Monad тестнеті.
+
+```bash
+node scripts/apriori-multi.js
+```
+
+### 5. Liquidity Provision
+Модуль для забезпечення ліквідності на DEX платформах (Uniswap) на Monad тестнеті.
+
+```bash
+node scripts/liquidity-multi.js
+```
+
+## Тестування
+
+Для тестування модуля забезпечення ліквідності можна використати:
+
+```bash
+node scripts/test-liquidity.js
+```
+
+Перед запуском тесту переконайтеся, що ви замінили приватний ключ у файлі `scripts/test-liquidity.js` на свій.
+
+## Функціональність
+
+Кожен модуль підтримує наступні функції:
+
+1. **Автоматичне виконання операцій** для всіх гаманців з файлу `wallet.txt`
+2. **Використання проксі** з файлу `proxy.txt` для кожного гаманця
+3. **Випадкові затримки** між операціями (від 1 до 10 хвилин)
+4. **Випадкові суми** для операцій (від 0.01 до 0.05 MON)
+5. **Детальне логування** всіх операцій з посиланнями на транзакції в експлорері
+
+## Безпека
+
+- Ніколи не публікуйте свої приватні ключі
+- Використовуйте тільки тестові гаманці з тестовими токенами
+- Перевіряйте адреси контрактів перед взаємодією
+
+## Ліцензія
+
+MIT
 
