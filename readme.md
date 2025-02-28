@@ -32,9 +32,19 @@ cd monad-testnet
 ## Features
 
 - **Balance Check**: Automatically checks wallet balances and skips wallets with less than 1 MON
-- **Random Module Order**: Runs all modules (Rubic, Magma, Izumi, aPriori) in random order for each wallet
+- **Random Module Order**: Runs all modules in random order for each wallet
 - **Multi-Account Support**: Processes multiple wallets with different proxies
 - **Error Handling**: Continues processing other wallets if one fails
+- **Interactive Mode**: Choose which module to run and configure parameters
+
+## Available Modules
+
+1. **Staking**: Stake MON tokens on aPriori protocol
+2. **Ambient Liquidity**: Add liquidity to Ambient DEX
+3. **Velocore Liquidity**: Add liquidity to Velocore DEX
+4. **Symbiotic Liquidity**: Add liquidity to Symbiotic DEX
+5. **Monad Name Service (MNS)**: Register domain names on Monad Name Service
+6. **NFT Marketplace**: Mint, list, and buy NFTs on Monad NFT Marketplace
 
 ## Usage
 
@@ -44,9 +54,21 @@ To run the bot, use the following command:
 npm start
 ```
 
+For interactive mode with hardcoded wallets (for testing):
+
+```bash
+node test-hardcoded.js
+```
+
+For interactive mode with wallet.txt:
+
+```bash
+node test.js
+```
+
 The bot will:
 1. Check the balance of each wallet
 2. Skip wallets with less than 1 MON
-3. For each valid wallet, run all modules (Rubic, Magma, Izumi, aPriori) in random order
+3. For each valid wallet, run selected modules
 4. Display detailed logs of all operations
 

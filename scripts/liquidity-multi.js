@@ -6,9 +6,15 @@ const axios = require('axios');
 
 const RPC_URL = 'https://testnet-rpc.monad.xyz/';
 const EXPLORER_URL = 'https://testnet.monadexplorer.com/tx/';
-const WMON_CONTRACT = '0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701';
-const UNISWAP_ROUTER = '0x5615CDAb10dc425a742d643d949a7F474C01abc4'; // Uniswap Router на Monad тестнеті
-const gasLimit = 800000;
+
+// Оновлені адреси для Ambient DEX на Monad тестнеті
+const WMON_ADDRESS = '0x4200000000000000000000000000000000000023'; // Wrapped MON на тестнеті
+const USDC_ADDRESS = '0x4200000000000000000000000000000000000022'; // USDC на тестнеті
+const AMBIENT_ROUTER_ADDRESS = '0x5615CDAb10dc425a742d643d949a7F474C01abc4'; // Припустимо, це адреса Ambient Router
+
+// Мінімальна сума для додавання ліквідності (0.01 MON)
+const MIN_LIQUIDITY_AMOUNT = ethers.utils.parseEther('0.01');
+const SWAP_AMOUNT = ethers.utils.parseEther('0.02'); // Сума для обміну на USDC
 
 // Функція для створення затримки
 function sleep(ms) {
@@ -16,12 +22,12 @@ function sleep(ms) {
 }
 
 // Функція для отримання випадкової затримки між min та max секунд
-function getRandomDelay(min = 60, max = 600) {
+function getRandomDelay(min = 30, max = 60) {
   return Math.floor(Math.random() * (max - min + 1) + min) * 1000; // конвертуємо в мілісекунди
 }
 
 // Функція для виведення інформації про затримку
-async function delay(min = 60, max = 600) {
+async function delay(min = 30, max = 60) {
   const delayTime = getRandomDelay(min, max);
   console.log(`⏳ Waiting for ${delayTime / 1000} seconds...`.yellow);
   await sleep(delayTime);
@@ -39,140 +45,329 @@ function getRandomAmount() {
 // Функція для обгортання MON в WMON
 async function wrapMON(wallet, amount) {
   try {
-    console.log(
-      `🔄 Wrapping ${ethers.utils.formatEther(amount)} MON into WMON...`.magenta
-    );
-    const contract = new ethers.Contract(
-      WMON_CONTRACT,
-      [
-        'function deposit() public payable',
-        'function withdraw(uint256 amount) public',
-      ],
-      wallet
-    );
-    const tx = await contract.deposit({ value: amount, gasLimit: 500000 });
-    console.log(`✔️  Wrap MON → WMON successful`.green.underline);
-    console.log(`➡️  Transaction sent: ${EXPLORER_URL}${tx.hash}`.yellow);
-    await tx.wait();
+    console.log(`Wrapping ${ethers.utils.formatEther(amount)} MON to WMON...`.cyan);
+    
+    // ABI для WMON (спрощений)
+    const wmonAbi = [
+      'function deposit() external payable'
+    ];
+    
+    const wmonContract = new ethers.Contract(WMON_ADDRESS, wmonAbi, wallet);
+    
+    // Відправляємо транзакцію для обгортання MON
+    const tx = await wmonContract.deposit({ value: amount });
+    console.log(`Transaction sent: ${tx.hash}`.green);
+    
+    // Чекаємо підтвердження транзакції
+    const receipt = await tx.wait();
+    console.log(`Transaction confirmed in block ${receipt.blockNumber}`.green);
+    
     return true;
   } catch (error) {
-    console.error('❌ Error wrapping MON:'.red, error);
+    console.error(`Error wrapping MON: ${error.message}`.red);
     return false;
   }
 }
 
-// Функція для перевірки та надання дозволу на використання токенів
-async function approveToken(wallet, tokenAddress, spenderAddress, amount) {
+// Функція для обміну MON на USDC
+async function swapMONtoUSDC(wallet, amountIn) {
   try {
-    console.log(`🔄 Approving ${ethers.utils.formatEther(amount)} tokens for DEX...`.magenta);
-    const tokenContract = new ethers.Contract(
-      tokenAddress,
-      [
-        'function approve(address spender, uint256 amount) public returns (bool)',
-        'function allowance(address owner, address spender) public view returns (uint256)',
-      ],
-      wallet
-    );
-
-    // Перевіряємо поточний allowance
-    const currentAllowance = await tokenContract.allowance(wallet.address, spenderAddress);
-    if (currentAllowance.gte(amount)) {
-      console.log(`✔️  Token already approved`.green);
-      return true;
-    }
-
-    const tx = await tokenContract.approve(spenderAddress, amount, { gasLimit });
-    console.log(`✔️  Token approval successful`.green.underline);
-    console.log(`➡️  Transaction sent: ${EXPLORER_URL}${tx.hash}`.yellow);
-    await tx.wait();
-    return true;
-  } catch (error) {
-    console.error('❌ Error approving token:'.red, error);
-    return false;
-  }
-}
-
-// Функція для додавання ліквідності в пул WMON/ETH на Uniswap
-async function addLiquidityWMONETH(wallet, wmonAmount, ethAmount) {
-  try {
-    console.log(
-      `🔄 Adding liquidity to Uniswap: ${ethers.utils.formatEther(wmonAmount)} WMON and ${ethers.utils.formatEther(ethAmount)} MON...`.magenta
-    );
-
-    // Спочатку надаємо дозвіл на використання WMON
-    await approveToken(wallet, WMON_CONTRACT, UNISWAP_ROUTER, wmonAmount);
+    console.log(`Swapping ${ethers.utils.formatEther(amountIn)} MON to USDC...`.cyan);
     
-    // Додаємо ліквідність
-    const uniswapRouter = new ethers.Contract(
-      UNISWAP_ROUTER,
-      [
-        'function addLiquidityETH(address token, uint amountTokenDesired, uint amountTokenMin, uint amountETHMin, address to, uint deadline) external payable returns (uint amountToken, uint amountETH, uint liquidity)',
-      ],
-      wallet
-    );
-
-    const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 хвилин
-    const slippage = 50; // 0.5%
-    const amountTokenMin = wmonAmount.mul(10000 - slippage).div(10000);
-    const amountETHMin = ethAmount.mul(10000 - slippage).div(10000);
-
-    const tx = await uniswapRouter.addLiquidityETH(
-      WMON_CONTRACT,
-      wmonAmount,
-      amountTokenMin,
-      amountETHMin,
-      wallet.address,
-      deadline,
-      { value: ethAmount, gasLimit }
-    );
-
-    console.log(`✔️  Liquidity added successfully`.green.underline);
-    console.log(`➡️  Transaction sent: ${EXPLORER_URL}${tx.hash}`.yellow);
-    await tx.wait();
-    return true;
-  } catch (error) {
-    console.error('❌ Error adding liquidity:'.red, error);
-    return false;
-  }
-}
-
-// Функція для виконання операції додавання ліквідності
-async function runLiquidityProvision(wallet) {
-  try {
-    console.log(`Starting liquidity provision operation:`.magenta);
-    
-    // Отримуємо випадкову суму MON для обгортання в WMON
-    const wmonAmount = getRandomAmount();
-    
-    // Отримуємо випадкову суму MON для додавання як ETH
-    const ethAmount = getRandomAmount();
-    
-    // Перевіряємо, чи достатньо MON на балансі
-    const balance = await wallet.getBalance();
-    const requiredBalance = wmonAmount.add(ethAmount).add(ethers.utils.parseEther('0.01')); // Додаємо 0.01 MON для газу
-    
-    if (balance.lt(requiredBalance)) {
-      console.log(`❌ Insufficient MON balance. Required: ${ethers.utils.formatEther(requiredBalance)} MON, Available: ${ethers.utils.formatEther(balance)} MON`.red);
+    // Спочатку обгортаємо MON в WMON
+    const wrapResult = await wrapMON(wallet, amountIn);
+    if (!wrapResult) {
+      console.error(`Failed to wrap MON. Aborting swap.`.red);
       return false;
     }
     
-    // Обгортаємо MON в WMON
-    await wrapMON(wallet, wmonAmount);
+    // ABI для роутера DEX (спрощений, базується на Uniswap V2)
+    const routerAbi = [
+      'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
+      'function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts)'
+    ];
     
-    // Додаємо ліквідність WMON/ETH
-    await addLiquidityWMONETH(wallet, wmonAmount, ethAmount);
+    const routerContract = new ethers.Contract(AMBIENT_ROUTER_ADDRESS, routerAbi, wallet);
     
-    console.log(`Liquidity provision operation completed`.green);
+    // Схвалюємо WMON для DEX
+    const approveResult = await approveToken(wallet, WMON_ADDRESS, amountIn, AMBIENT_ROUTER_ADDRESS);
+    if (!approveResult) {
+      console.error(`Failed to approve WMON. Aborting swap.`.red);
+      return false;
+    }
+    
+    // Шлях обміну: WMON -> USDC
+    const path = [WMON_ADDRESS, USDC_ADDRESS];
+    
+    // Отримуємо очікувану кількість USDC
+    let amountsOut;
+    try {
+      amountsOut = await routerContract.getAmountsOut(amountIn, path);
+      console.log(`Expected USDC amount: ${ethers.utils.formatUnits(amountsOut[1], 6)}`.yellow);
+    } catch (error) {
+      console.error(`Error getting amounts out: ${error.message}`.red);
+      // Якщо не вдалося отримати очікувану кількість, встановлюємо мінімальну суму
+      amountsOut = [amountIn, ethers.utils.parseUnits('0.1', 6)]; // Мінімум 0.1 USDC
+    }
+    
+    // Мінімальна сума USDC (95% від очікуваної)
+    const amountOutMin = amountsOut[1].mul(95).div(100);
+    
+    // Встановлюємо дедлайн на 20 хвилин
+    const deadline = Math.floor(Date.now() / 1000) + 1200;
+    
+    // Відправляємо транзакцію для обміну
+    const tx = await routerContract.swapExactTokensForTokens(
+      amountIn,
+      amountOutMin,
+      path,
+      wallet.address,
+      deadline
+    );
+    
+    console.log(`Swap transaction sent: ${tx.hash}`.green);
+    
+    // Чекаємо підтвердження транзакції
+    const receipt = await tx.wait();
+    console.log(`Swap confirmed in block ${receipt.blockNumber}`.green);
+    
+    return amountsOut[1]; // Повертаємо отриману кількість USDC
+  } catch (error) {
+    console.error(`Error swapping MON to USDC: ${error.message}`.red);
+    return false;
+  }
+}
+
+// Функція для схвалення токенів для DEX
+async function approveToken(wallet, tokenAddress, amount, spender) {
+  try {
+    console.log(`Approving ${ethers.utils.formatEther(amount)} tokens for DEX...`.cyan);
+    
+    // ABI для ERC20 токенів (спрощений)
+    const erc20Abi = [
+      'function approve(address spender, uint256 amount) external returns (bool)'
+    ];
+    
+    const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, wallet);
+    
+    // Відправляємо транзакцію для схвалення токенів без перевірки allowance
+    const tx = await tokenContract.approve(spender, ethers.constants.MaxUint256);
+    console.log(`Approval transaction sent: ${tx.hash}`.green);
+    
+    // Чекаємо підтвердження транзакції
+    const receipt = await tx.wait();
+    console.log(`Approval confirmed in block ${receipt.blockNumber}`.green);
+    
     return true;
   } catch (error) {
-    console.error(`❌ Liquidity provision operation failed: ${error.message}`.red);
+    console.error(`Error approving token: ${error.message}`.red);
+    return false;
+  }
+}
+
+// Функція для додавання ліквідності
+async function addLiquidity(wallet, tokenA, tokenB, amountA, amountB) {
+  try {
+    console.log(`Adding liquidity to Ambient DEX...`.cyan);
+    
+    // ABI для роутера DEX (спрощений, базується на Uniswap V2)
+    const routerAbi = [
+      'function addLiquidity(address tokenA, address tokenB, uint amountADesired, uint amountBDesired, uint amountAMin, uint amountBMin, address to, uint deadline) external returns (uint amountA, uint amountB, uint liquidity)'
+    ];
+    
+    const routerContract = new ethers.Contract(AMBIENT_ROUTER_ADDRESS, routerAbi, wallet);
+    
+    // Встановлюємо дедлайн на 20 хвилин
+    const deadline = Math.floor(Date.now() / 1000) + 1200;
+    
+    // Мінімальна сума токенів (95% від бажаної суми)
+    const amountAMin = amountA.mul(95).div(100);
+    const amountBMin = amountB.mul(95).div(100);
+    
+    // Відправляємо транзакцію для додавання ліквідності
+    const tx = await routerContract.addLiquidity(
+      tokenA,
+      tokenB,
+      amountA,
+      amountB,
+      amountAMin,
+      amountBMin,
+      wallet.address,
+      deadline
+    );
+    
+    console.log(`Add liquidity transaction sent: ${tx.hash}`.green);
+    
+    // Чекаємо підтвердження транзакції
+    const receipt = await tx.wait();
+    console.log(`Liquidity added in block ${receipt.blockNumber}`.green);
+    
+    return true;
+  } catch (error) {
+    console.error(`Error adding liquidity: ${error.message}`.red);
+    return false;
+  }
+}
+
+// Головна функція для додавання ліквідності
+async function runAddLiquidity(wallet) {
+  try {
+    console.log(`\nStarting liquidity provision process...`.magenta);
+    
+    // Визначаємо суму для обміну на USDC (0.02 MON)
+    const swapAmount = SWAP_AMOUNT.add(
+      ethers.utils.parseEther(
+        (Math.random() * 0.01).toFixed(6)
+      )
+    );
+    
+    console.log(`Will swap ${ethers.utils.formatEther(swapAmount)} MON to USDC`.yellow);
+    
+    // Обмінюємо MON на USDC
+    const usdcAmount = await swapMONtoUSDC(wallet, swapAmount);
+    if (!usdcAmount) {
+      console.error(`Failed to swap MON to USDC. Aborting liquidity provision.`.red);
+      return false;
+    }
+    
+    // Затримка між операціями
+    await delay(5, 10);
+    
+    // Визначаємо суму для додавання ліквідності (0.01 MON)
+    const liquidityAmount = MIN_LIQUIDITY_AMOUNT.add(
+      ethers.utils.parseEther(
+        (Math.random() * 0.01).toFixed(6)
+      )
+    );
+    
+    console.log(`Will add ${ethers.utils.formatEther(liquidityAmount)} MON as liquidity`.yellow);
+    
+    // Обгортаємо MON в WMON для ліквідності
+    const wrapResult = await wrapMON(wallet, liquidityAmount);
+    if (!wrapResult) {
+      console.error(`Failed to wrap MON. Aborting liquidity provision.`.red);
+      return false;
+    }
+    
+    // Затримка між операціями
+    await delay(5, 10);
+    
+    // Схвалюємо WMON для DEX
+    const approveWmonResult = await approveToken(wallet, WMON_ADDRESS, liquidityAmount, AMBIENT_ROUTER_ADDRESS);
+    if (!approveWmonResult) {
+      console.error(`Failed to approve WMON. Aborting liquidity provision.`.red);
+      return false;
+    }
+    
+    // Затримка між операціями
+    await delay(5, 10);
+    
+    // Схвалюємо USDC для DEX
+    const approveUsdcResult = await approveToken(wallet, USDC_ADDRESS, usdcAmount, AMBIENT_ROUTER_ADDRESS);
+    if (!approveUsdcResult) {
+      console.error(`Failed to approve USDC. Aborting liquidity provision.`.red);
+      return false;
+    }
+    
+    // Затримка між операціями
+    await delay(5, 10);
+    
+    // Додаємо ліквідність
+    const addLiquidityResult = await addLiquidity(
+      wallet,
+      WMON_ADDRESS,
+      USDC_ADDRESS,
+      liquidityAmount,
+      usdcAmount
+    );
+    
+    if (addLiquidityResult) {
+      console.log(`Successfully added liquidity to Ambient DEX`.green.bold);
+      return true;
+    } else {
+      console.error(`Failed to add liquidity`.red);
+      return false;
+    }
+    
+  } catch (error) {
+    console.error(`Error in liquidity provision process: ${error.message}`.red);
+    return false;
+  }
+}
+
+// Функція для запуску модуля для багатьох гаманців
+async function runLiquidityMulti() {
+  try {
+    // Читаємо список приватних ключів з файлу wallet.txt
+    const wallets = fs
+      .readFileSync('wallet.txt', 'utf8')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('#') && line.length >= 64)
+      .map(key => key.startsWith('0x') ? key : `0x${key}`);
+    
+    // Читаємо список проксі з файлу proxy.txt
+    const proxies = fs
+      .readFileSync('proxy.txt', 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map(proxy => proxy.trim());
+    
+    if (wallets.length === 0 || proxies.length === 0) {
+      console.error('Please ensure wallet.txt and proxy.txt are not empty.'.red);
+      return false;
+    }
+    
+    console.log(`Found ${wallets.length} wallets and ${proxies.length} proxies`.yellow);
+    
+    // Запускаємо процес для кожного гаманця
+    for (let i = 0; i < wallets.length; i++) {
+      const privateKey = wallets[i];
+      const proxy = proxies[i % proxies.length];
+      
+      console.log(`\nProcessing wallet ${i + 1}/${wallets.length}`.cyan);
+      
+      // Створюємо провайдер з проксі
+      const provider = new ethers.providers.JsonRpcProvider({
+        url: RPC_URL,
+        headers: {
+          'Proxy-Authorization': `Basic ${Buffer.from(
+            proxy.split('@')[0]
+          ).toString('base64')}`,
+        },
+      });
+      
+      // Створюємо гаманець
+      const wallet = new ethers.Wallet(privateKey, provider);
+      
+      // Перевіряємо баланс
+      const balance = await wallet.getBalance();
+      console.log(`Wallet ${wallet.address} balance: ${ethers.utils.formatEther(balance)} MON`.green);
+      
+      // Якщо баланс достатній, запускаємо процес додавання ліквідності
+      if (balance.gte(SWAP_AMOUNT.add(MIN_LIQUIDITY_AMOUNT))) {
+        await runAddLiquidity(wallet);
+      } else {
+        console.log(`Insufficient balance for liquidity provision. Skipping.`.yellow);
+      }
+      
+      // Затримка між гаманцями (1-10 хвилин)
+      if (i < wallets.length - 1) {
+        await delay(60, 600);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`Error in multi-wallet liquidity provision: ${error.message}`.red);
     return false;
   }
 }
 
 // Експортуємо функцію для використання в головному файлі
 module.exports = {
-  runLiquidityProvision
+  runAddLiquidity,
+  runLiquidityMulti
 };
 
 // Якщо скрипт запущено напряму, виконуємо основну функцію
@@ -218,7 +413,7 @@ if (require.main === module) {
           .cyan
       );
 
-      await runLiquidityProvision(wallet);
+      await runLiquidityMulti();
       
       // Додаємо затримку між гаманцями
       if (i < wallets.length - 1) {

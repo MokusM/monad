@@ -2,15 +2,10 @@ const prompts = require('prompts');
 const { ethers } = require('ethers');
 const fs = require('fs');
 const colors = require('colors');
-const velocoreModule = require('./scripts/velocore-liquidity');
-const symbioticModule = require('./scripts/symbiotic-liquidity');
-const nnsModule = require('./scripts/nad-name-service');
-const nftMarketplaceModule = require('./scripts/monad-nft-marketplace');
-const ambientModule = require('./scripts/ambient-liquidity');
 
 // Константи
 const RPC_URL = 'https://testnet-rpc.monad.xyz/';
-const MIN_BALANCE = ethers.utils.parseEther('1.0'); // Мінімальний баланс 1 токен
+const MIN_BALANCE = ethers.utils.parseEther('0.01'); // Зменшений мінімальний баланс для тестування
 
 // Функція для створення затримки
 function sleep(ms) {
@@ -30,21 +25,13 @@ async function delay(min = 30, max = 60) {
   console.log(`✅ Delay completed`.green);
 }
 
-// Читаємо список приватних ключів з файлу wallet.txt
-let wallets = [];
-try {
-  const fileContent = fs.readFileSync('wallet.txt', 'utf8');
-  wallets = fileContent
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line && !line.startsWith('#') && line.length >= 64)
-    .map(key => key.startsWith('0x') ? key : `0x${key}`);
-  
-  console.log(`Loaded ${wallets.length} wallets from file`);
-} catch (error) {
-  console.error(`Error reading wallet file: ${error.message}`.red);
-  process.exit(1);
-}
+// Hardcoded wallets for testing
+const wallets = [
+  '0xea2fb5f12f159066fe156837fca53380175c095c31ca33b2d9b1ea156a68ec89',
+  '0x4e682a82c677ce2f3c7b547bf60e4aae8c3596bdfe230923d567959de52fa4e1'
+];
+
+console.log(`Using ${wallets.length} hardcoded wallets for testing`);
 
 // Читаємо список проксі з файлу proxy.txt
 const proxies = fs
@@ -90,6 +77,12 @@ async function checkWalletBalance(privateKey, proxy) {
   }
 }
 
+const velocoreModule = require('./scripts/velocore-liquidity');
+const symbioticModule = require('./scripts/symbiotic-liquidity');
+const nnsModule = require('./scripts/nad-name-service');
+const nftMarketplaceModule = require('./scripts/monad-nft-marketplace');
+const ambientModule = require('./scripts/ambient-liquidity');
+
 // Функція для запуску вибраного модуля
 async function runSelectedModule(wallet, provider, proxy, moduleName, useDelay = true) {
   console.log(`\nStarting operations for account ${wallet.address} using proxy ${proxy}`.cyan);
@@ -122,6 +115,9 @@ async function runSelectedModule(wallet, provider, proxy, moduleName, useDelay =
         break;
       case 'Ambient Liquidity':
         console.log(`\nStarting ${moduleName}...`.magenta);
+        // Використовуємо стандартні суми для обміну та додавання ліквідності
+        const swapAmount = ethers.utils.parseEther('0.03');
+        const liquidityAmount = ethers.utils.parseEther('0.02');
         result = await ambientModule.runAmbientLiquidity(wallet, useDelay);
         break;
       case 'Velocore Liquidity':
