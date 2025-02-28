@@ -1,0 +1,36 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+package-lock.json
+
+# Файли з приватними ключами та проксі
+wallet.txt
+proxy.txt
+*.key
+*.pem
+.env
+
+# Логи
+logs/
+*.log
+
+# Тимчасові файли
+.DS_Store
+.tmp/
+.temp/
+tmp/
+temp/
+
+# IDE та редактори
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Інші файли
+.cache/
+dist/
+build/ 
