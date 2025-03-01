@@ -2,10 +2,15 @@ const prompts = require('prompts');
 const { ethers } = require('ethers');
 const fs = require('fs');
 const colors = require('colors');
+const velocoreModule = require('./scripts/velocore-liquidity');
+const symbioticModule = require('./scripts/symbiotic-liquidity');
+const nnsModule = require('./scripts/nad-name-service');
+const nftMarketplaceModule = require('./scripts/monad-nft-marketplace');
+const ambientModule = require('./scripts/ambient-liquidity');
 
 // Константи
 const RPC_URL = 'https://testnet-rpc.monad.xyz/';
-const MIN_BALANCE = ethers.utils.parseEther('0.01'); // Зменшений мінімальний баланс для тестування
+const MIN_BALANCE = ethers.utils.parseEther('0.01'); // Знижуємо мінімальний баланс для тестування
 
 // Функція для створення затримки
 function sleep(ms) {
@@ -25,24 +30,25 @@ async function delay(min = 30, max = 60) {
   console.log(`✅ Delay completed`.green);
 }
 
-// Hardcoded wallets for testing
-const wallets = [
-  '0xea2fb5f12f159066fe156837fca53380175c095c31ca33b2d9b1ea156a68ec89',
-  '0x4e682a82c677ce2f3c7b547bf60e4aae8c3596bdfe230923d567959de52fa4e1'
+// Жорстко закодовані приватні ключі для тестування
+const hardcodedWallets = [
+  "0x4e682a82c677ce2f3c7b547bf60e4aae8c3596bdfe230923d567959de52fa4e1",
+  "0xea2fb5f12f159066fe156837fca53380175c095c31ca33b2d9b1ea156a68ec89"
 ];
 
-console.log(`Using ${wallets.length} hardcoded wallets for testing`);
+console.log(`Using ${hardcodedWallets.length} hardcoded wallets for testing`);
 
 // Читаємо список проксі з файлу proxy.txt
-const proxies = fs
-  .readFileSync('proxy.txt', 'utf8')
-  .split('\n')
-  .filter(Boolean)
-  .map(proxy => proxy.trim());
-
-if (wallets.length === 0 || proxies.length === 0) {
-  console.error('Please ensure wallet.txt and proxy.txt are not empty.'.red);
-  process.exit(1);
+let proxies = [];
+try {
+  const proxyContent = fs.readFileSync('proxy.txt', 'utf8');
+  proxies = proxyContent
+    .split('\n')
+    .filter(Boolean)
+    .map(proxy => proxy.trim());
+} catch (error) {
+  // Якщо файл не знайдено, використовуємо тестовий проксі
+  proxies = ["http://541271985d048090:RNW78Fm5@res.proxy-seller.com:10029"];
 }
 
 // Функція для перевірки балансу гаманця
@@ -77,12 +83,6 @@ async function checkWalletBalance(privateKey, proxy) {
   }
 }
 
-const velocoreModule = require('./scripts/velocore-liquidity');
-const symbioticModule = require('./scripts/symbiotic-liquidity');
-const nnsModule = require('./scripts/nad-name-service');
-const nftMarketplaceModule = require('./scripts/monad-nft-marketplace');
-const ambientModule = require('./scripts/ambient-liquidity');
-
 // Функція для запуску вибраного модуля
 async function runSelectedModule(wallet, provider, proxy, moduleName, useDelay = true) {
   console.log(`\nStarting operations for account ${wallet.address} using proxy ${proxy}`.cyan);
@@ -115,9 +115,6 @@ async function runSelectedModule(wallet, provider, proxy, moduleName, useDelay =
         break;
       case 'Ambient Liquidity':
         console.log(`\nStarting ${moduleName}...`.magenta);
-        // Використовуємо стандартні суми для обміну та додавання ліквідності
-        const swapAmount = ethers.utils.parseEther('0.03');
-        const liquidityAmount = ethers.utils.parseEther('0.02');
         result = await ambientModule.runAmbientLiquidity(wallet, useDelay);
         break;
       case 'Velocore Liquidity':
@@ -161,8 +158,8 @@ async function main() {
   const walletResults = [];
   
   // Перевіряємо баланси всіх гаманців
-  for (let i = 0; i < wallets.length; i++) {
-    const privateKey = wallets[i];
+  for (let i = 0; i < hardcodedWallets.length; i++) {
+    const privateKey = hardcodedWallets[i];
     const proxy = proxies[i % proxies.length];
     
     const result = await checkWalletBalance(privateKey, proxy);
@@ -174,7 +171,7 @@ async function main() {
   // Фільтруємо гаманці з достатнім балансом
   const validWallets = walletResults.filter(w => w.hasEnoughBalance);
   
-  console.log(`\nFound ${validWallets.length} of ${wallets.length} wallets with sufficient balance`.yellow);
+  console.log(`\nFound ${validWallets.length} of ${hardcodedWallets.length} wallets with sufficient balance`.yellow);
   
   if (validWallets.length === 0) {
     console.log('No wallets with sufficient balance. Exiting...'.red);
