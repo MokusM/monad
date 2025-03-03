@@ -33,4 +33,5 @@ temp/
 # Інші файли
 .cache/
 dist/
-build/ 
+build/
+config.js 

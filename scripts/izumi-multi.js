@@ -2,6 +2,7 @@ require('dotenv').config();
 const { ethers } = require('ethers');
 const colors = require('colors');
 const fs = require('fs');
+const config = require('../config');
 
 const RPC_URL = 'https://testnet-rpc.monad.xyz/';
 const EXPLORER_URL = 'https://testnet.monadexplorer.com/tx/';
@@ -13,22 +14,22 @@ function sleep(ms) {
 }
 
 // Функція для отримання випадкової затримки між min та max секунд
-function getRandomDelay(min = 60, max = 600) {
-  return Math.floor(Math.random() * (max - min + 1) + min) * 1000; // конвертуємо в мілісекунди
+function getRandomDelay(min = config.DELAYS.MIN_DELAY, max = config.DELAYS.MAX_DELAY) {
+  return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
 }
 
 // Функція для виведення інформації про затримку
-async function delay(min = 60, max = 600) {
+async function delay(min = config.DELAYS.MIN_DELAY, max = config.DELAYS.MAX_DELAY) {
   const delayTime = getRandomDelay(min, max);
   console.log(`⏳ Waiting for ${delayTime / 1000} seconds...`.yellow);
   await sleep(delayTime);
   console.log(`✅ Delay completed`.green);
 }
 
-// Функція для отримання випадкової суми MON між 0.01 та 0.05
+// Функція для отримання випадкової суми MON
 function getRandomAmount() {
-  const min = 0.01;
-  const max = 0.05;
+  const min = config.AMOUNTS.MIN_AMOUNT;
+  const max = config.AMOUNTS.MAX_AMOUNT;
   const randomAmount = Math.random() * (max - min) + min;
   return ethers.utils.parseEther(randomAmount.toFixed(4));
 }
@@ -82,7 +83,7 @@ async function unwrapMON(wallet, amount) {
   }
 }
 
-// Функція для виконання одноразового обміну
+// Функція для свапу через Izumi
 async function runSwap(wallet) {
   try {
     const randomAmount = getRandomAmount();
@@ -93,7 +94,7 @@ async function runSwap(wallet) {
     
     // Додаємо затримку між операціями
     if (wrapSuccess) {
-      await delay(60, 600); // Затримка 1-10 хвилин між операціями
+      await delay();
       await unwrapMON(wallet, randomAmount);
     }
     
@@ -158,7 +159,7 @@ if (require.main === module) {
       // Додаємо затримку між гаманцями
       if (i < wallets.length - 1) {
         console.log(`\nMoving to next wallet...`.cyan);
-        await delay(60, 600); // Затримка 1-10 хвилин між гаманцями
+        await delay(); // Затримка 1-10 хвилин між гаманцями
       }
     }
 
