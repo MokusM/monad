@@ -34,120 +34,7 @@ function getRandomAmount() {
   return ethers.utils.parseEther(randomAmount.toFixed(4));
 }
 
-// Адреса контракту Azaar DEX агрегатора (приклад)
-const AZAAR_ROUTER_ADDRESS = '0x1234567890123456789012345678901234567890'; // Замінити на реальну адресу, коли буде доступна
-
-// Спрощений ABI для взаємодії з Azaar DEX агрегатором
-const AZAAR_ROUTER_ABI = [
-  'function getAmountsOut(uint amountIn, address[] memory path) public view returns (uint[] memory amounts)',
-  'function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)',
-  'function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable returns (uint[] memory amounts)',
-  'function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)'
-];
-
-// Функція для перевірки найкращого маршруту обміну через Azaar
-async function checkBestRoute(wallet, amountIn, fromToken, toToken) {
-  try {
-    console.log(`🔍 Checking best route for ${ethers.utils.formatEther(amountIn)} ${fromToken === WMON_CONTRACT ? 'WMON' : fromToken} to ${toToken === WMON_CONTRACT ? 'WMON' : toToken}...`.cyan);
-    
-    // В реальному сценарії ми б використовували API або метод контракту для отримання найкращого маршруту
-    // Демо-реалізація:
-    console.log(`📊 Found the best route through Azaar DEX Aggregator`.blue);
-    console.log(`💰 Expected output: ${(ethers.utils.formatEther(amountIn) * 0.995).toFixed(4)} ${toToken === WMON_CONTRACT ? 'WMON' : toToken} (0.5% fee)`.yellow);
-    
-    return {
-      success: true,
-      outputAmount: amountIn.mul(995).div(1000), // Симуляція 0.5% комісії
-      route: [fromToken, toToken]
-    };
-  } catch (error) {
-    console.error('❌ Error checking best route:'.red, error);
-    return { success: false };
-  }
-}
-
-// Функція для виконання обміну через Azaar DEX агрегатор
-async function executeSwap(wallet, amount, fromToken, toToken) {
-  try {
-    console.log(`🔄 Executing swap through Azaar DEX Aggregator...`.magenta);
-    
-    // Отримуємо дані про найкращий маршрут
-    const routeInfo = await checkBestRoute(wallet, amount, fromToken, toToken);
-    if (!routeInfo.success) {
-      throw new Error('Failed to find optimal route');
-    }
-    
-    // Підготовка контракту маршрутизатора
-    const router = new ethers.Contract(
-      AZAAR_ROUTER_ADDRESS,
-      AZAAR_ROUTER_ABI,
-      wallet
-    );
-    
-    // Параметри для транзакції
-    const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 хвилин
-    const slippage = 0.5; // 0.5% допустиме просковзування
-    const amountOutMin = routeInfo.outputAmount.mul(1000 - Math.floor(slippage * 10)).div(1000);
-    
-    let tx;
-    
-    // Обмін MON -> Token (MON -> WMON -> Token)
-    if (fromToken === WMON_CONTRACT) {
-      console.log(`💸 Swapping ${ethers.utils.formatEther(amount)} WMON to Token...`.magenta);
-      
-      // Спочатку потрібно схвалити використання WMON для роутера
-      const wmonContract = new ethers.Contract(
-        WMON_CONTRACT,
-        ['function approve(address spender, uint256 amount) public returns (bool)'],
-        wallet
-      );
-      
-      console.log(`🔑 Approving WMON for Azaar DEX Router...`.yellow);
-      const approveTx = await wmonContract.approve(
-        AZAAR_ROUTER_ADDRESS, 
-        amount,
-        { gasLimit: config.GAS.DEFAULT_GAS_LIMIT }
-      );
-      console.log(`➡️  Approval transaction sent: ${config.EXPLORER_URL}${approveTx.hash}`.yellow);
-      await approveTx.wait();
-      
-      // Виконуємо обмін
-      tx = await router.swapExactTokensForTokens(
-        amount,
-        amountOutMin,
-        routeInfo.route,
-        wallet.address,
-        deadline,
-        { gasLimit: config.GAS.DEFAULT_GAS_LIMIT }
-      );
-    } 
-    // Обмін Token -> MON (Token -> WMON -> MON)
-    else if (toToken === WMON_CONTRACT) {
-      console.log(`💸 Swapping Token to ${ethers.utils.formatEther(amount)} WMON...`.magenta);
-      
-      // Для прикладу спростимо і використаємо обмін WMON -> WMON
-      tx = await router.swapExactTokensForTokens(
-        amount,
-        amountOutMin,
-        routeInfo.route,
-        wallet.address,
-        deadline,
-        { gasLimit: config.GAS.DEFAULT_GAS_LIMIT }
-      );
-    }
-    
-    console.log(`✔️  Swap transaction successful`.green.underline);
-    console.log(`➡️  Transaction sent: ${config.EXPLORER_URL}${tx.hash}`.yellow);
-    await tx.wait();
-    
-    return true;
-  } catch (error) {
-    console.error('❌ Error executing swap:'.red, error);
-    return false;
-  }
-}
-
-// Функція для обгортання MON в WMON (як у rubic-multi.js)
+// Функція для обгортання MON в WMON
 async function wrapMON(wallet, amount) {
   try {
     console.log(
@@ -175,7 +62,7 @@ async function wrapMON(wallet, amount) {
   }
 }
 
-// Функція для розгортання WMON назад в MON (як у rubic-multi.js)
+// Функція для розгортання WMON назад в MON
 async function unwrapMON(wallet, amount) {
   try {
     console.log(
@@ -203,11 +90,32 @@ async function unwrapMON(wallet, amount) {
   }
 }
 
-// Головна функція для виконання обміну через Azaar
+// Функція перевірки балансу WMON
+async function checkWMONBalance(wallet) {
+  try {
+    const contract = new ethers.Contract(
+      config.CONTRACTS.WMON,
+      ['function balanceOf(address account) external view returns (uint256)'],
+      wallet
+    );
+    const balance = await contract.balanceOf(wallet.address);
+    console.log(`💰 WMON Balance: ${ethers.utils.formatEther(balance)} WMON`.blue);
+    return balance;
+  } catch (error) {
+    console.error('❌ Error checking WMON balance:'.red, error);
+    return ethers.BigNumber.from(0);
+  }
+}
+
+// Головна функція для виконання азаар операцій (тепер без симуляції - реальні транзакції)
 async function runSwap(wallet) {
   try {
     const randomAmount = getRandomAmount();
-    console.log(`Starting Azaar DEX aggregator swap operation:`.magenta);
+    console.log(`Starting Azaar swap operation:`.magenta);
+    
+    // Отримуємо поточний баланс MON
+    const monBalance = await wallet.getBalance();
+    console.log(`💰 Current MON Balance: ${ethers.utils.formatEther(monBalance)} MON`.blue);
     
     // Обгортаємо MON в WMON
     const wrapSuccess = await wrapMON(wallet, randomAmount);
@@ -216,22 +124,20 @@ async function runSwap(wallet) {
       // Додаємо затримку між операціями
       await delay(); 
       
-      // Виконуємо обмін WMON -> WMON (симуляція обміну токенів)
-      const swapSuccess = await executeSwap(wallet, randomAmount, WMON_CONTRACT, WMON_CONTRACT);
+      // Перевіряємо баланс WMON після обгортання
+      await checkWMONBalance(wallet);
       
-      if (swapSuccess) {
-        // Додаємо затримку між операціями
-        await delay(); 
-        
-        // Розгортаємо WMON назад в MON
-        await unwrapMON(wallet, randomAmount);
-      }
+      // Додаємо затримку між операціями
+      await delay();
+      
+      // Розгортаємо WMON назад в MON
+      await unwrapMON(wallet, randomAmount);
     }
     
-    console.log(`Azaar DEX aggregator swap operation completed`.green);
+    console.log(`Azaar swap operation completed`.green);
     return true;
   } catch (error) {
-    console.error(`❌ Azaar DEX aggregator swap operation failed: ${error.message}`.red);
+    console.error(`❌ Azaar swap operation failed: ${error.message}`.red);
     return false;
   }
 }
@@ -255,7 +161,7 @@ if (require.main === module) {
   }
 
   async function main() {
-    console.log(`Starting Azaar DEX aggregator operations for all accounts...`);
+    console.log(`Starting Azaar operations for all accounts...`);
 
     // Виконуємо операції для кожного гаманця
     for (let i = 0; i < wallets.length; i++) {
