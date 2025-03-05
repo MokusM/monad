@@ -42,19 +42,20 @@ async function runModulesInRandomOrder(wallet, provider, proxy) {
         { name: 'Rubic Swap', run: async () => await require('./scripts/rubic-multi').runSwap(wallet) },
         { name: 'Magma Staking', run: async () => await require('./scripts/magma-multi').runStaking(wallet) },
         { name: 'Izumi Swap', run: async () => await require('./scripts/izumi-multi').runSwap(wallet) },
-        { name: 'aPriori Staking', run: async () => await require('./scripts/apriori-multi').runStaking(wallet) },
-        { name: 'Bean Exchange', run: async () => await require('./scripts/bean-multi').runSwap(wallet) }
+        { name: 'aPriori Staking', run: async () => await require('./scripts/apriori-multi').runStaking(wallet) }
     ];
 
-    // Перемішуємо масив модулів
-    const shuffledModules = [...modules].sort(() => Math.random() - 0.5);
+    // Перемішуємо масив модулів і вибираємо перші 3
+    const selectedModules = [...modules]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 3);
 
     console.log(`\nStarting operations for account ${wallet.address} using proxy ${proxy}`.cyan);
     console.log(`Wallet balance: ${ethers.utils.formatEther(await wallet.getBalance())} MON`.green);
-    console.log(`Running modules in random order: ${shuffledModules.map(m => m.name).join(' -> ')}`.yellow);
+    console.log(`Running 3 random modules in order: ${selectedModules.map(m => m.name).join(' -> ')}`.yellow);
 
-    // Запускаємо модулі по черзі
-    for (const module of shuffledModules) {
+    // Запускаємо вибрані модулі по черзі
+    for (const module of selectedModules) {
         console.log(`\nStarting ${module.name}...`.magenta);
         await module.run();
         console.log(`${module.name} completed`.green);

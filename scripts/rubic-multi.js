@@ -4,9 +4,9 @@ const colors = require('colors');
 const fs = require('fs');
 const config = require('../config');
 
-const RPC_URL = 'https://testnet-rpc.monad.xyz/';
-const EXPLORER_URL = 'https://testnet.monadexplorer.com/tx/';
-const WMON_CONTRACT = '0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701';
+const RPC_URL = config.RPC_URL;
+const EXPLORER_URL = config.EXPLORER_URL;
+const WMON_CONTRACT = config.CONTRACTS.WMON;
 
 // Функція для створення затримки
 function sleep(ms) {
@@ -24,23 +24,6 @@ async function delay(min = config.DELAYS.MIN_DELAY, max = config.DELAYS.MAX_DELA
   console.log(`⏳ Waiting for ${delayTime / 1000} seconds...`.yellow);
   await sleep(delayTime);
   console.log(`✅ Delay completed`.green);
-}
-
-// Membaca daftar private key dari file wallet.txt
-const wallets = fs
-  .readFileSync('wallet.txt', 'utf8')
-  .split('\n')
-  .filter(Boolean);
-
-// Membaca daftar proxy dari file proxy.txt
-const proxies = fs
-  .readFileSync('proxy.txt', 'utf8')
-  .split('\n')
-  .filter(Boolean);
-
-if (wallets.length === 0 || proxies.length === 0) {
-  console.error('Please ensure wallet.txt and proxy.txt are not empty.'.red);
-  process.exit(1);
 }
 
 // Функція для отримання випадкової суми MON
@@ -137,6 +120,17 @@ module.exports = {
 
 // Якщо скрипт запущено напряму, виконуємо основну функцію
 if (require.main === module) {
+  // Отримуємо гаманці з конфігурації
+  const wallets = config.WALLETS;
+  
+  // Отримуємо проксі з конфігурації
+  const proxies = config.PROXIES;
+
+  if (wallets.length === 0 || proxies.length === 0) {
+    console.error('Please ensure WALLETS and PROXIES are configured in config.js'.red);
+    process.exit(1);
+  }
+
   async function main() {
     console.log(`Starting swap operations for all accounts...`);
 

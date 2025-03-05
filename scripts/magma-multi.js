@@ -119,20 +119,14 @@ if (require.main === module) {
   async function main() {
     console.log(`Starting staking operations for all accounts...`);
     
-    // Читаємо список приватних ключів з файлу wallet.txt
-    const wallets = fs
-      .readFileSync('wallet.txt', 'utf8')
-      .split('\n')
-      .filter(Boolean);
-
-    // Читаємо список проксі з файлу proxy.txt
-    const proxies = fs
-      .readFileSync('proxy.txt', 'utf8')
-      .split('\n')
-      .filter(Boolean);
+    // Отримуємо гаманці з конфігурації
+    const wallets = config.WALLETS;
+    
+    // Отримуємо проксі з конфігурації
+    const proxies = config.PROXIES;
 
     if (wallets.length === 0 || proxies.length === 0) {
-      console.error('Please ensure wallet.txt and proxy.txt are not empty.'.red);
+      console.error('Please ensure WALLETS and PROXIES are configured in config.js'.red);
       process.exit(1);
     }
     
