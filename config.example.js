@@ -8,6 +8,18 @@ const config = {
         WMON: '0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701',
     },
 
+    // NFT контракти для відстеження
+    NFT_CONTRACTS: [
+        // {
+        //     address: '0xNFT_CONTRACT_ADDRESS_1',
+        //     name: 'NFT Collection 1'
+        // },
+        // {
+        //     address: '0xNFT_CONTRACT_ADDRESS_2',
+        //     name: 'NFT Collection 2'
+        // }
+    ],
+
     // Налаштування балансів
     MIN_BALANCE: '1.0', // в MON
 
