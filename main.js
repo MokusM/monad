@@ -42,7 +42,8 @@ async function runModulesInRandomOrder(wallet, provider, proxy) {
         { name: 'Rubic Swap', run: async () => await require('./scripts/rubic-multi').runSwap(wallet) },
         { name: 'Magma Staking', run: async () => await require('./scripts/magma-multi').runStaking(wallet) },
         { name: 'Izumi Swap', run: async () => await require('./scripts/izumi-multi').runSwap(wallet) },
-        { name: 'aPriori Staking', run: async () => await require('./scripts/apriori-multi').runStaking(wallet) }
+        { name: 'aPriori Staking', run: async () => await require('./scripts/apriori-multi').runStaking(wallet) },
+        { name: 'Azaar DEX', run: async () => await require('./scripts/azaar-multi').runSwap(wallet) }
     ];
 
     // Перемішуємо масив модулів і вибираємо перші 3
