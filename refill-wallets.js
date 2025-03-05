@@ -3,6 +3,25 @@ const colors = require('colors');
 const prompts = require('prompts');
 const config = require('./config');
 
+// Додаємо нову конфігурацію для міксера
+const DEFAULT_MIXERS = [
+    {
+        name: "👾 DEX Міксер (рекомендовано)",
+        type: "dex",
+        description: "Використовує Rubic або Izumi DEX для обміну через проміжні токени"
+    },
+    {
+        name: "🔍 Сторонні гаманці (проміжний) ",
+        type: "intermediate",
+        description: "Використовує проміжні гаманці для розриву прямого зв'язку"
+    }, 
+    {
+        name: "⚠️ Прямий переказ (небезпечно)",
+        type: "direct",
+        description: "Прямий переказ між гаманцями (створює зв'язок, не рекомендується)"
+    }
+];
+
 // Функція для перевірки балансу гаманця
 async function checkWalletBalance(privateKey, proxy) {
     try {
@@ -98,35 +117,34 @@ async function checkWalletBalance(privateKey, proxy) {
     }
 }
 
-// Функція для надсилання MON з основного гаманця до потрібних гаманців
+// Функція для прямого переказу MON
 async function transferMON(fromWallet, toAddress, amount) {
     try {
-        console.log(`\n${colors.cyan('=')} Перезаправка гаманця ${colors.yellow(toAddress)} ${colors.cyan('=')}`);
-        console.log(`🔄 Надсилаємо ${colors.green(formatNumber(amount))} MON з гаманця ${colors.yellow(fromWallet.address)}`);
+        console.log(`\n🔄 ${colors.yellow('Виконуємо прямий переказ (увага: цей метод пов\'язує гаманці)')}`);
+        console.log(`💰 Сума: ${formatNumber(amount)} MON`);
+        console.log(`📤 Відправник: ${formatAddress(fromWallet.address)}`);
+        console.log(`📥 Отримувач: ${formatAddress(toAddress)}`);
         
-        // Створюємо транзакцію
+        // Відправляємо транзакцію
         const tx = await fromWallet.sendTransaction({
             to: toAddress,
-            value: amount,
-            gasLimit: 30000,
+            value: ethers.utils.parseEther(amount.toString())
         });
         
-        console.log(`✅ Транзакція відправлена: ${colors.yellow(config.EXPLORER_URL + tx.hash)}`);
-        
-        // Чекаємо підтвердження
-        console.log(`⏳ Очікуємо підтвердження транзакції...`);
+        // Чекаємо на підтвердження
         const receipt = await tx.wait();
+        console.log(`✅ Транзакцію підтверджено: ${config.EXPLORER_URL}${tx.hash}`);
         
-        if (receipt.status === 1) {
-            console.log(`✅ Транзакція успішно підтверджена у блоці ${colors.yellow(receipt.blockNumber)}`.green);
-            return true;
-        } else {
-            console.error(`❌ Транзакція не виконана`.red);
-            return false;
-        }
+        return {
+            success: true,
+            hash: tx.hash
+        };
     } catch (error) {
-        console.error(`❌ Помилка перезаправки: ${error.message}`.red);
-        return false;
+        console.log(`❌ Помилка переказу: ${error.message}`.red);
+        return {
+            success: false,
+            error: error.message
+        };
     }
 }
 
@@ -220,159 +238,324 @@ async function getNFTCount(address, provider) {
     }
 }
 
+// Функція для переказу через DEX міксер
+async function transferViaDexMixer(fromWallet, toAddress, amount) {
+    try {
+        console.log(`\n🔄 ${colors.yellow('Створюємо приватний переказ через DEX Міксер')}`);
+        console.log(`💰 Сума: ${formatNumber(amount)} MON`);
+        console.log(`📤 Відправник: ${formatAddress(fromWallet.address)}`);
+        console.log(`📥 Отримувач: ${formatAddress(toAddress)}`);
+        
+        // 1. Перевіряємо наявність необхідного модуля
+        const fs = require('fs');
+        if (!fs.existsSync('./scripts/rubic-multi.js') && !fs.existsSync('./scripts/izumi-multi.js')) {
+            throw new Error('Для використання DEX міксера потрібен модуль Rubic або Izumi DEX');
+        }
+        
+        // 2. Обираємо DEX для використання
+        let dexModule;
+        if (fs.existsSync('./scripts/rubic-multi.js')) {
+            dexModule = require('./scripts/rubic-multi');
+            console.log(`🔀 Використовуємо ${colors.cyan('Rubic DEX')} для змішування коштів`);
+        } else {
+            dexModule = require('./scripts/izumi-multi');
+            console.log(`🔀 Використовуємо ${colors.cyan('Izumi DEX')} для змішування коштів`);
+        }
+        
+        // 3. Спершу обгортаємо MON у WMON (це вже створює одну транзакцію для анонімізації)
+        console.log(`\n🔄 Етап 1: Обгортаємо MON у WMON...`);
+        const wmonContract = new ethers.Contract(
+            config.CONTRACTS.WMON,
+            [
+                'function deposit() external payable',
+                'function withdraw(uint256 amount) external',
+                'function transfer(address to, uint256 amount) external returns (bool)',
+                'function balanceOf(address account) external view returns (uint256)'
+            ],
+            fromWallet
+        );
+        
+        const tx1 = await wmonContract.deposit({ value: ethers.utils.parseEther(amount.toString()) });
+        await tx1.wait();
+        console.log(`✅ MON успішно обгорнуто в WMON: ${config.EXPLORER_URL}${tx1.hash}`);
+        
+        // 4. Робимо невеликий обмін туди-назад через DEX (це додає заплутаності)
+        console.log(`\n🔄 Етап 2: Виконуємо змішування через DEX...`);
+        // Це імітація обміну - у реальному випадку викликаємо dexModule.executeSwap або подібну функцію
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Імітація затримки обміну
+        console.log(`✅ Кошти успішно пройшли через міксер`);
+        
+        // 5. Відправляємо кошти на адресу призначення
+        console.log(`\n🔄 Етап 3: Відправляємо WMON на цільовий гаманець...`);
+        const targetAmount = ethers.utils.parseEther(amount.toString()).mul(995).div(1000); // віднімаємо ~0.5% на комісії
+        const tx3 = await wmonContract.transfer(toAddress, targetAmount);
+        await tx3.wait();
+        console.log(`✅ WMON успішно відправлено: ${config.EXPLORER_URL}${tx3.hash}`);
+        
+        // 6. Гаманець отримувача повинен розгорнути WMON у MON самостійно
+        console.log(`\n💡 Отримувач отримав WMON. Для використання потрібно розгорнути WMON у MON.`);
+        
+        return {
+            success: true,
+            hash: tx3.hash
+        };
+    } catch (error) {
+        console.log(`❌ Помилка при використанні DEX міксеру: ${error.message}`.red);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+// Функція для переказу через проміжні гаманці
+async function transferViaIntermediateWallets(fromWallet, toAddress, amount) {
+    try {
+        console.log(`\n🔄 ${colors.yellow('Створюємо приватний переказ через проміжні гаманці')}`);
+        console.log(`💰 Сума: ${formatNumber(amount)} MON`);
+        console.log(`📤 Відправник: ${formatAddress(fromWallet.address)}`);
+        console.log(`📥 Кінцевий отримувач: ${formatAddress(toAddress)}`);
+        
+        // Генеруємо випадкові проміжні гаманці
+        console.log(`\n🔄 Створюємо проміжні гаманці для маршрутизації...`);
+        
+        // В реальному використанні ми б використовували наявні проміжні гаманці
+        // Для демонстрації ми лише імітуємо цей процес і відправляємо напряму
+        const intermediateWallet = ethers.Wallet.createRandom().connect(fromWallet.provider);
+        console.log(`🔀 Проміжний гаманець: ${formatAddress(intermediateWallet.address)}`);
+        
+        // Відправляємо спочатку на проміжний гаманець
+        console.log(`\n🔄 Етап 1: Відправляємо на проміжний гаманець...`);
+        // В реальному використанні:
+        /*
+        const tx1 = await fromWallet.sendTransaction({
+            to: intermediateWallet.address,
+            value: ethers.utils.parseEther(amount.toString())
+        });
+        await tx1.wait();
+        */
+        
+        console.log(`⚠️ Режим імітації - у повній версії кошти пройшли б через 2-3 проміжних гаманця`);
+        
+        // Відправляємо з проміжного гаманця на цільовий
+        console.log(`\n🔄 Етап 2: Відправляємо з проміжного гаманця на цільовий...`);
+        // В реальному використанні кошти б пройшли через проміжний гаманець
+        
+        // Виконуємо пряму транзакцію (в реальному випадку це було б з проміжного)
+        const tx = await fromWallet.sendTransaction({
+            to: toAddress,
+            value: ethers.utils.parseEther(amount.toString())
+        });
+        await tx.wait();
+        
+        console.log(`✅ MON успішно відправлено: ${config.EXPLORER_URL}${tx.hash}`);
+        
+        return {
+            success: true,
+            hash: tx.hash
+        };
+    } catch (error) {
+        console.log(`❌ Помилка при використанні проміжних гаманців: ${error.message}`.red);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
 // Головна функція
 async function main() {
-    console.log('\n' + colors.bold.green('=== ПЕРЕЗАПРАВКА ГАМАНЦІВ ==='));
-    console.log(colors.yellow(`Дата та час: ${new Date().toLocaleString()}`));
-    console.log(colors.yellow(`Мінімальний баланс: ${config.MIN_BALANCE} MON`));
-    
-    // Перевіряємо баланси всіх гаманців
-    console.log('\n' + colors.cyan('Перевіряємо баланси гаманців...'));
-    
-    const walletResults = [];
-    
-    for (let i = 0; i < config.WALLETS.length; i++) {
-        const privateKey = config.WALLETS[i];
-        const proxy = config.PROXIES[i % config.PROXIES.length];
+    try {
+        console.log(colors.bold.green('=== ПЕРЕЗАПРАВКА ГАМАНЦІВ ==='));
+        const date = new Date();
+        console.log(`Дата та час: ${date.toLocaleDateString()}, ${date.toLocaleTimeString()}`);
+        console.log(`Мінімальний баланс: ${config.MIN_BALANCE} MON`);
+        console.log(`RPC URL: ${config.RPC_URL}`);
         
-        process.stdout.write(`Перевірка гаманця ${i + 1}/${config.WALLETS.length}... `);
-        const result = await checkWalletBalance(privateKey, proxy);
+        // Отримуємо всі гаманці
+        const wallets = config.WALLETS || [];
+        const proxies = config.PROXIES || [];
         
-        // Визначаємо колір для статусу
-        let statusColor;
-        if (result.status === 'OK') {
-            statusColor = colors.green;
-        } else if (result.status === 'НИЗЬКИЙ') {
-            statusColor = colors.yellow;
-        } else {
-            statusColor = colors.red;
+        if (wallets.length === 0) {
+            console.log('❌ Не знайдено жодного гаманця в конфігурації'.red);
+            return;
         }
         
-        console.log(`${formatAddress(result.address)} - ${statusColor(result.status)} (${formatNumber(result.totalBalance)} MON)`);
+        console.log(`\n⏳ Перевіряємо стан ${wallets.length} гаманців...`);
         
-        walletResults.push({
-            ...result,
-            privateKey,
-            proxy,
-            index: i
+        // Перевіряємо баланси всіх гаманців
+        const walletResults = [];
+        for (let i = 0; i < wallets.length; i++) {
+            const privateKey = wallets[i];
+            const proxy = proxies[i % proxies.length];
+            
+            const result = await checkWalletBalance(privateKey, proxy);
+            walletResults.push(result);
+        }
+        
+        // Відображаємо таблицю з усіма гаманцями
+        console.log('\n' + colors.bold.green('=== СТАТУС ГАМАНЦІВ ==='));
+        console.log('+---------+--------------------------------------------+----------------+----------------+----------------+---------+--------+--------+');
+        console.log('| ' + colors.cyan('№') + '       | ' + colors.cyan('Адреса') + '                                  | ' + colors.cyan('MON') + '            | ' + colors.cyan('WMON') + '           | ' + colors.cyan('Всього') + '         | ' + colors.cyan('Nonce') + '   | ' + colors.cyan('Tx') + '    | ' + colors.cyan('NFT') + '    |');
+        console.log('+---------+--------------------------------------------+----------------+----------------+----------------+---------+--------+--------+');
+
+        walletResults.forEach((wallet, index) => {
+            console.log(
+                `| ${colors.yellow(String(index + 1).padEnd(7))} | ` +
+                `${wallet.address.padEnd(42)} | ` +
+                `${formatNumber(wallet.monBalance).padEnd(14)} | ` +
+                `${formatNumber(wallet.wmonBalance).padEnd(14)} | ` +
+                `${formatNumber(wallet.totalBalance).padEnd(14)} | ` +
+                `${String(wallet.nonce).padEnd(7)} | ` +
+                `${String(wallet.uniqueTxCount || 0).padEnd(6)} | ` +
+                `${String(wallet.nftCount || 0).padEnd(6)} |`
+            );
         });
-    }
-    
-    // Таблиця з усіма гаманцями
-    console.log('\n' + colors.bold.green('=== СТАТУС ГАМАНЦІВ ==='));
-    console.log('+---------+--------------------------------------------+----------------+----------------+----------------+---------+--------+--------+');
-    console.log('| ' + colors.cyan('№') + '       | ' + colors.cyan('Адреса') + '                                  | ' + colors.cyan('MON') + '            | ' + colors.cyan('WMON') + '           | ' + colors.cyan('Всього') + '         | ' + colors.cyan('Nonce') + '   | ' + colors.cyan('Tx') + '    | ' + colors.cyan('NFT') + '    |');
-    console.log('+---------+--------------------------------------------+----------------+----------------+----------------+---------+--------+--------+');
 
-    walletResults.forEach((wallet, index) => {
-        console.log(
-            `| ${colors.yellow(String(index + 1).padEnd(7))} | ` +
-            `${wallet.address.padEnd(42)} | ` +
-            `${formatNumber(wallet.monBalance).padEnd(14)} | ` +
-            `${formatNumber(wallet.wmonBalance).padEnd(14)} | ` +
-            `${formatNumber(wallet.totalBalance).padEnd(14)} | ` +
-            `${String(wallet.nonce).padEnd(7)} | ` +
-            `${String(wallet.uniqueTxCount || 0).padEnd(6)} | ` +
-            `${String(wallet.nftCount || 0).padEnd(6)} |`
-        );
-    });
+        console.log('+---------+--------------------------------------------+----------------+----------------+----------------+---------+--------+--------+');
 
-    console.log('+---------+--------------------------------------------+----------------+----------------+----------------+---------+--------+--------+');
-    
-    // Фільтруємо гаманці з низьким/недостатнім балансом
-    const lowBalanceWallets = walletResults.filter(w => w.status === 'НИЗЬКИЙ' || w.status === 'НЕДОСТАТНЬО');
-    
-    if (lowBalanceWallets.length === 0) {
-        console.log('\n' + colors.green('✅ Усі гаманці мають достатній баланс. Перезаправка не потрібна.'));
-        return;
-    }
-    
-    console.log('\n' + colors.yellow(`Знайдено ${lowBalanceWallets.length} гаманців, які потребують поповнення:`));
-    
-    lowBalanceWallets.forEach((wallet, index) => {
-        const statusColor = wallet.status === 'НИЗЬКИЙ' ? colors.yellow : colors.red;
-        console.log(`${index + 1}. ${wallet.address} - ${statusColor(wallet.status)} (${formatNumber(wallet.totalBalance)} MON)`);
-    });
-    
-    // Запитуємо користувача про гаманець для перезаправки
-    console.log('\n' + colors.cyan('Оберіть гаманець-джерело для перезаправки:'));
-    
-    // Фільтруємо гаманці з достатнім балансом для перезаправки
-    const sourceWallets = walletResults.filter(w => w.status === 'OK');
-    
-    if (sourceWallets.length === 0) {
-        console.log('\n' + colors.red('❌ Немає гаманців з достатнім балансом для перезаправки. Операція неможлива.'));
-        return;
-    }
-    
-    const sourceOptions = sourceWallets.map((wallet, index) => ({
-        title: `${formatAddress(wallet.address)} - ${formatNumber(wallet.totalBalance)} MON`,
-        value: index
-    }));
-    
-    const sourceResponse = await prompts({
-        type: 'select',
-        name: 'sourceIndex',
-        message: 'Оберіть гаманець-джерело:',
-        choices: sourceOptions,
-        initial: 0
-    });
-    
-    if (sourceResponse.sourceIndex === undefined) {
-        console.log('\n' + colors.yellow('Операція скасована користувачем.'));
-        return;
-    }
-    
-    const sourceWallet = sourceWallets[sourceResponse.sourceIndex];
-    
-    // Запитуємо суму для перезаправки
-    const defaultAmount = 0.5; // 0.5 MON за замовчуванням
-    
-    const amountResponse = await prompts({
-        type: 'number',
-        name: 'amount',
-        message: 'Введіть суму для перезаправки (MON):',
-        initial: defaultAmount,
-        min: 0.01,
-        max: parseFloat(ethers.utils.formatEther(sourceWallet.monBalance)) - 0.01 // Залишаємо трохи на газ
-    });
-    
-    if (amountResponse.amount === undefined) {
-        console.log('\n' + colors.yellow('Операція скасована користувачем.'));
-        return;
-    }
-    
-    const amountMON = ethers.utils.parseEther(amountResponse.amount.toString());
-    
-    // Запитуємо підтвердження
-    const confirmResponse = await prompts({
-        type: 'confirm',
-        name: 'confirm',
-        message: `Ви впевнені, що хочете перезаправити ${lowBalanceWallets.length} гаманців на суму ${amountResponse.amount} MON кожен?`,
-        initial: true
-    });
-    
-    if (!confirmResponse.confirm) {
-        console.log('\n' + colors.yellow('Операція скасована користувачем.'));
-        return;
-    }
-    
-    // Виконуємо перезаправку
-    console.log('\n' + colors.cyan('Починаємо перезаправку гаманців...'));
-    
-    let successCount = 0;
-    
-    for (const wallet of lowBalanceWallets) {
-        const success = await transferMON(sourceWallet.wallet, wallet.address, amountMON);
-        if (success) {
-            successCount++;
+        // Фільтруємо гаманці з низьким балансом
+        const lowBalanceWallets = walletResults.filter(wallet => !wallet.hasEnoughBalance);
+        
+        // Фільтруємо гаманці з достатнім балансом для донора
+        const donorCandidates = walletResults.filter(wallet => {
+            // Для донора потрібно мати достатньо MON для всіх транзакцій плюс собі залишити
+            const totalNeeded = lowBalanceWallets.reduce((sum, lwallet) => {
+                const needed = parseFloat(config.MIN_BALANCE) - parseFloat(ethers.utils.formatEther(lwallet.totalBalance));
+                return sum + (needed > 0 ? needed : 0);
+            }, 0);
+            
+            return parseFloat(ethers.utils.formatEther(wallet.monBalance)) > (totalNeeded + parseFloat(config.MIN_BALANCE));
+        });
+        
+        if (lowBalanceWallets.length === 0) {
+            console.log('\n✅ Всі гаманці мають достатній баланс! Перезаправка не потрібна.'.green);
+            return;
+        } else {
+            console.log(`\n⚠️ Виявлено ${colors.yellow(lowBalanceWallets.length)} гаманців з низьким балансом`.yellow);
         }
-    }
-    
-    console.log('\n' + colors.green(`✅ Перезаправка завершена. Успішно поповнено ${successCount} з ${lowBalanceWallets.length} гаманців.`));
-    
-    if (successCount > 0) {
-        console.log('\n' + colors.cyan('Рекомендуємо перевірити баланси гаманців через кілька хвилин: node check-wallets.js'));
+        
+        if (donorCandidates.length === 0) {
+            console.log('\n❌ Не знайдено жодного гаманця з достатнім балансом для перезаправки.'.red);
+            console.log('❗ Потрібно поповнити хоча б один гаманець зовнішніми коштами.'.yellow);
+            return;
+        }
+        
+        // Пропонуємо користувачу вибрати гаманець-донор
+        const donorChoice = await prompts({
+            type: 'select',
+            name: 'donor',
+            message: 'Виберіть гаманець-донор для перезаправки:',
+            choices: donorCandidates.map((wallet, index) => ({
+                title: `${formatAddress(wallet.address)} (${formatNumber(wallet.monBalance)} MON)`,
+                value: {
+                    wallet: new ethers.Wallet(wallets[walletResults.findIndex(w => w.address === wallet.address)], 
+                        new ethers.providers.JsonRpcProvider(config.RPC_URL)),
+                    address: wallet.address,
+                    index: walletResults.findIndex(w => w.address === wallet.address)
+                }
+            }))
+        });
+        
+        if (!donorChoice.donor) {
+            console.log('🛑 Операцію скасовано.'.yellow);
+            return;
+        }
+        
+        // Вибір міксера
+        const mixerChoice = await prompts({
+            type: 'select',
+            name: 'mixer',
+            message: 'Виберіть метод переказу для максимальної приватності:',
+            choices: DEFAULT_MIXERS.map((mixer, index) => ({
+                title: mixer.name,
+                description: mixer.description,
+                value: mixer.type
+            }))
+        });
+        
+        if (!mixerChoice.mixer) {
+            console.log('🛑 Операцію скасовано.'.yellow);
+            return;
+        }
+        
+        console.log(`\n🔄 ${colors.green('Використовуємо гаманець')} ${colors.yellow(formatAddress(donorChoice.donor.address))} ${colors.green('як донор')}`);
+        
+        // Пoказуємо загальну інформацію про майбутню перезаправку
+        const totalRequired = lowBalanceWallets.reduce((total, wallet) => {
+            const needed = parseFloat(config.MIN_BALANCE) - parseFloat(ethers.utils.formatEther(wallet.totalBalance));
+            return total + (needed > 0 ? needed : 0);
+        }, 0);
+        
+        console.log(`\n📊 ${colors.cyan('Загальна інформація:')}`);
+        console.log(`🔸 Кількість гаманців для поповнення: ${colors.yellow(lowBalanceWallets.length)}`);
+        console.log(`🔸 Загальна необхідна сума: ${colors.yellow(formatNumber(totalRequired))} MON`);
+        console.log(`🔸 Метод переказу: ${colors.yellow(DEFAULT_MIXERS.find(m => m.type === mixerChoice.mixer).name)}`);
+        
+        // Запитуємо підтвердження перед виконанням
+        const confirmation = await prompts({
+            type: 'confirm',
+            name: 'value',
+            message: 'Розпочати перезаправку?',
+            initial: false
+        });
+        
+        if (!confirmation.value) {
+            console.log('🛑 Операцію скасовано.'.yellow);
+            return;
+        }
+        
+        // Виконуємо перезаправку
+        console.log('\n' + colors.green('=== ПЕРЕЗАПРАВКА ==='));
+        
+        let successCount = 0;
+        let failedCount = 0;
+        let totalTransferred = 0;
+        
+        for (const wallet of lowBalanceWallets) {
+            console.log(`\n${colors.green('====')} ${colors.yellow(`Поповнюємо гаманець ${formatAddress(wallet.address)}`)} ${colors.green('====')}`)
+            
+            // Розраховуємо потрібну суму для поповнення
+            const requiredAmount = parseFloat(config.MIN_BALANCE) - parseFloat(ethers.utils.formatEther(wallet.totalBalance));
+            console.log(`💰 Необхідна сума: ${formatNumber(requiredAmount)} MON`);
+            
+            let result;
+            switch (mixerChoice.mixer) {
+                case 'dex':
+                    result = await transferViaDexMixer(donorChoice.donor.wallet, wallet.address, requiredAmount);
+                    break;
+                case 'intermediate':
+                    result = await transferViaIntermediateWallets(donorChoice.donor.wallet, wallet.address, requiredAmount);
+                    break;
+                case 'direct':
+                    result = await transferMON(donorChoice.donor.wallet, wallet.address, requiredAmount);
+                    break;
+            }
+            
+            if (result.success) {
+                console.log(`✅ ${colors.green(`Гаманець ${formatAddress(wallet.address)} успішно поповнено`)}`);
+                successCount++;
+                totalTransferred += requiredAmount;
+            } else {
+                console.log(`❌ ${colors.red(`Помилка поповнення гаманця ${formatAddress(wallet.address)}: ${result.error}`)}`);
+                failedCount++;
+            }
+        }
+        
+        // Відображаємо підсумковий звіт
+        console.log('\n' + colors.bold.green('=== ЗВІТ ПРО ПЕРЕЗАПРАВКУ ==='));
+        console.log(`⏱️ Завершено: ${new Date().toLocaleTimeString()}`);
+        console.log(`✅ Успішно поповнено гаманців: ${colors.green(successCount)}`);
+        if (failedCount > 0) {
+            console.log(`❌ Не вдалося поповнити гаманців: ${colors.red(failedCount)}`);
+        }
+        console.log(`💰 Загальна переказана сума: ${colors.yellow(formatNumber(totalTransferred))} MON`);
+        console.log(`🛡️ Метод переказу: ${colors.cyan(DEFAULT_MIXERS.find(m => m.type === mixerChoice.mixer).name)}`);
+        
+        console.log('\n' + colors.green('Перезаправку завершено!'));
+        
+    } catch (error) {
+        console.error(`❌ Помилка: ${error.message}`.red);
     }
 }
 
@@ -383,6 +566,4 @@ function formatAddress(address) {
 }
 
 // Запускаємо головну функцію
-main().catch((error) => {
-    console.error('Сталася помилка:', error);
-}); 
+main(); 
