@@ -118,24 +118,101 @@ async function checkWalletBalance(privateKey, proxy, index) {
     }
 }
 
+// Функція для перемішування масиву (алгоритм Fisher-Yates shuffle)
+function shuffleArray(array, seed = 'random') {
+    const newArray = [...array]; // Створюємо копію масиву, щоб не змінювати оригінал
+    
+    // Створюємо простий генератор випадкових чисел на основі seed
+    const randomGenerator = () => {
+        if (seed === 'random') {
+            return Math.random();
+        } else {
+            // Простий детермінований генератор на основі рядка seed
+            let hash = 0;
+            for (let i = 0; i < seed.length; i++) {
+                hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+                hash |= 0; // Перетворюємо на 32-бітне ціле
+            }
+            
+            // Поточний час для більшої випадковості, але якщо seed фіксований, 
+            // то буде послідовність, що повторюється, а не завжди одна й та ж
+            const currentTimestamp = Date.now(); 
+            return Math.abs(Math.sin(hash + currentTimestamp)) % 1;
+        }
+    };
+    
+    // Алгоритм Fisher-Yates shuffle
+    for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(randomGenerator() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+    }
+    
+    return newArray;
+}
+
+// Функція для отримання набору гаманців з перемішуванням, якщо потрібно
+function getWallets() {
+    const wallets = config.WALLETS || [];
+    const proxies = config.PROXIES || [];
+    
+    if (wallets.length === 0) {
+        console.log('❌ Не знайдено жодного гаманця в конфігурації'.red);
+        return { wallets: [], proxies: [] };
+    }
+    
+    // Перевіряємо, чи потрібно перемішувати гаманці
+    if (config.PRIVACY && config.PRIVACY.SHUFFLE_WALLETS) {
+        const seed = config.PRIVACY.SHUFFLE_SEED || 'random';
+        console.log(`🔀 ${colors.cyan('Перемішуємо гаманці для підвищення приватності')} (${seed !== 'random' ? 'детерміновано' : 'випадково'})`);
+        
+        // Створюємо пари [гаманець, проксі] для збереження відповідності
+        const pairs = wallets.map((wallet, index) => ({
+            wallet,
+            proxy: proxies[index % proxies.length]
+        }));
+        
+        // Перемішуємо пари
+        const shuffledPairs = shuffleArray(pairs, seed);
+        
+        // Розділяємо назад на масиви
+        const shuffledWallets = shuffledPairs.map(pair => pair.wallet);
+        const shuffledProxies = shuffledPairs.map(pair => pair.proxy);
+        
+        return { wallets: shuffledWallets, proxies: shuffledProxies };
+    }
+    
+    return { wallets, proxies };
+}
+
 // Головна функція
 async function main() {
-    console.log('\n' + colors.bold.green('=== ПЕРЕВІРКА СТАНУ ГАМАНЦІВ ==='));
-    console.log(colors.yellow(`Дата та час: ${new Date().toLocaleString()}`));
-    console.log(colors.yellow(`Мінімальний баланс: ${config.MIN_BALANCE} MON`));
-    console.log(colors.yellow(`RPC URL: ${config.RPC_URL}`));
-
-    const walletResults = [];
+    console.log(colors.bold.green('=== ПЕРЕВІРКА СТАНУ ГАМАНЦІВ ==='));
+    const date = new Date();
+    console.log(`Дата та час: ${date.toLocaleDateString()}, ${date.toLocaleTimeString()}`);
+    console.log(`Мінімальний баланс: ${config.MIN_BALANCE} MON`);
+    console.log(`RPC URL: ${config.RPC_URL}`);
+    
+    // Отримуємо гаманці (можливо перемішані)
+    const { wallets, proxies } = getWallets();
+    
+    console.log(`\n⏳ Перевіряємо стан ${wallets.length} гаманців...`);
     
     // Перевіряємо баланси всіх гаманців
-    for (let i = 0; i < config.WALLETS.length; i++) {
-        const privateKey = config.WALLETS[i];
-        const proxy = config.PROXIES[i % config.PROXIES.length];
+    const walletResults = [];
+    for (let i = 0; i < wallets.length; i++) {
+        const privateKey = wallets[i];
+        const proxy = proxies[i % proxies.length];
         
         const result = await checkWalletBalance(privateKey, proxy, i);
         walletResults.push(result);
+        
+        // Додаємо випадкову затримку, якщо потрібно
+        if (config.PRIVACY && config.PRIVACY.RANDOM_DELAYS && i < wallets.length - 1) {
+            const delay = Math.floor(Math.random() * 2000) + 500; // 500-2500 мс
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
     }
-
+    
     // Підводимо підсумки
     const totalMON = walletResults.reduce((sum, wallet) => sum.add(wallet.monBalance), ethers.BigNumber.from(0));
     const totalWMON = walletResults.reduce((sum, wallet) => sum.add(wallet.wmonBalance), ethers.BigNumber.from(0));
@@ -143,7 +220,7 @@ async function main() {
     const validWallets = walletResults.filter(w => w.hasEnoughBalance).length;
     
     console.log('\n' + colors.bold.green('=== ПІДСУМОК ==='));
-    console.log(colors.cyan(`Загальна кількість гаманців: ${colors.yellow(config.WALLETS.length)}`));
+    console.log(colors.cyan(`Загальна кількість гаманців: ${colors.yellow(wallets.length)}`));
     console.log(colors.cyan(`Гаманців з достатнім балансом: ${colors.yellow(validWallets)}`));
     console.log(colors.cyan(`Загальний баланс MON: ${colors.green(formatNumber(totalMON))} MON`));
     console.log(colors.cyan(`Загальний баланс WMON: ${colors.green(formatNumber(totalWMON))} WMON`));
