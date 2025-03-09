@@ -1,11 +1,16 @@
 const colors = require('colors');
 const { spawn } = require('child_process');
 const prompts = require('prompts');
+const path = require('path');
+
+// Шлях до кореневої директорії проекту
+const rootDir = path.resolve(__dirname, '..');
 
 // Масив доступних інструментів
 const tools = [
-    { title: '🔍 Перевірити всі гаманці', value: 'check-wallets', command: 'node check-wallets.js' },
-    { title: '💰 Перезаправити гаманці', value: 'refill-wallets', command: 'node refill-wallets.js' },
+    { title: '🔍 Перевірити всі гаманці', value: 'check-wallets', command: 'node tools/check-wallets.js' },
+    { title: '💰 Перезаправити гаманці', value: 'refill-wallets', command: 'node tools/refill-wallets.js' },
+    { title: '🔌 Перевірити проксі-сервери', value: 'proxy-check', command: 'node tools/proxy-check.js' },
     { title: '🚀 Запустити головний скрипт', value: 'main', command: 'node main.js' },
     { title: '⚙️ Запустити Rubic модуль', value: 'rubic', command: 'node scripts/rubic-multi.js' },
     { title: '⚙️ Запустити Magma модуль', value: 'magma', command: 'node scripts/magma-multi.js' },
