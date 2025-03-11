@@ -37,25 +37,26 @@ async function checkWalletBalance(privateKey, proxy) {
 }
 
 // Функція для запуску модулів у випадковому порядку
-async function runModulesInRandomOrder(wallet, provider, proxy) {
+async function runModulesInRandomOrder(wallet, provider, proxy, moduleCount) {
     // Масив модулів
     const modules = [
         { name: 'Rubic Swap', run: async () => await require('./scripts/rubic-multi').runSwap(wallet) },
         { name: 'Magma Staking', run: async () => await require('./scripts/magma-multi').runStaking(wallet) },
         { name: 'Izumi Swap', run: async () => await require('./scripts/izumi-multi').runSwap(wallet) },
-        { name: 'aPriori Staking', run: async () => await require('./scripts/apriori-multi').runStaking(wallet) }
+        { name: 'aPriori Staking', run: async () => await require('./scripts/apriori-multi').runStaking(wallet) },
+        { name: 'MagicEden NFT Mint', run: async () => await require('./scripts/magiceden-mint').runMint(wallet) },
+        { name: 'Nad Domains Registration', run: async () => await require('./scripts/nad-domains').runDomainRegistration(wallet) }
     ];
 
     // Перемішуємо масив модулів
     const selectedModules = walletUtils.shuffleArray([...modules]);
     
-    // Вибираємо випадкову кількість модулів (1-3)
-    const numModules = Math.floor(Math.random() * 3) + 1;
-    const modulesToRun = selectedModules.slice(0, numModules);
+    // Вибираємо вказану кількість модулів (або всі, якщо вказано більше ніж є)
+    const modulesToRun = selectedModules.slice(0, Math.min(moduleCount, modules.length));
 
     console.log(`\n${colors.cyan(`Починаємо операції для гаманця ${walletUtils.formatAddress(wallet.address)} через проксі ${proxy.split('@')[1] || proxy}`)}`);
     console.log(`${colors.green(`Баланс гаманця: ${walletUtils.formatNumber(ethers.utils.formatEther(await wallet.getBalance()))} MON`)}`);
-    console.log(`${colors.yellow(`Запускаємо ${numModules} випадкових модулів: ${modulesToRun.map(m => m.name).join(' → ')}`)}`);
+    console.log(`${colors.yellow(`Запускаємо ${modulesToRun.length} модулів: ${modulesToRun.map(m => m.name).join(' → ')}`)}`);
 
     // Запускаємо вибрані модулі по черзі
     for (const module of modulesToRun) {
@@ -134,6 +135,31 @@ async function main() {
         console.log('🛑 Операцію скасовано користувачем. Завершення...'.yellow);
         return;
     }
+    
+    // Запитуємо про кількість модулів для запуску
+    const moduleResponse = await prompts({
+        type: 'select',
+        name: 'moduleCount',
+        message: 'Скільки модулів запускати для кожного гаманця?',
+        choices: [
+            { title: 'Випадкова кількість (1-6)', value: 0 },
+            { title: '1 модуль', value: 1 },
+            { title: '2 модулі', value: 2 },
+            { title: '3 модулі', value: 3 },
+            { title: '4 модулі', value: 4 },
+            { title: '5 модулів', value: 5 },
+            { title: 'Всі модулі (6)', value: 6 }
+        ],
+        initial: 0
+    });
+    
+    // Визначаємо кількість модулів для запуску
+    let moduleCount = moduleResponse.moduleCount;
+    if (moduleCount === 0) {
+        // Якщо вибрана випадкова кількість, генеруємо число від 1 до 6
+        moduleCount = Math.floor(Math.random() * 6) + 1;
+        console.log(`🎲 ${colors.cyan(`Випадково обрано ${moduleCount} модулів для запуску`)}`);
+    }
 
     // Запитуємо про додаткове перемішування
     let shuffledValidWallets = [...validWallets];
@@ -153,7 +179,7 @@ async function main() {
 
     // Запускаємо модулі для кожного гаманця з достатнім балансом
     for (const walletData of shuffledValidWallets) {
-        await runModulesInRandomOrder(walletData.wallet, walletData.provider, walletData.proxy);
+        await runModulesInRandomOrder(walletData.wallet, walletData.provider, walletData.proxy, moduleCount);
         
         // Додаємо випадкову затримку між гаманцями
         if (shuffledValidWallets.indexOf(walletData) < shuffledValidWallets.length - 1) {

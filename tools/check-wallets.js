@@ -1,6 +1,6 @@
 const { ethers } = require('ethers');
 const colors = require('colors');
-const config = require('./config');
+const config = require('../config');
 
 // Додаткові константи
 const WMON_CONTRACT = '0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701';
@@ -330,42 +330,39 @@ async function getUniqueTransactionsCount(address, provider) {
 // Функція для отримання кількості NFT на гаманці
 async function getNFTCount(address, provider) {
     try {
-        let totalNFTs = 0;
+        // Створюємо кеш даних NFT, якщо увімкнено у конфігурації
+        let nftCache = {};
         
-        // Використовуємо масив NFT контрактів з конфігурації
-        if (config.NFT_CONTRACTS && config.NFT_CONTRACTS.length > 0) {
-            for (const nftConfig of config.NFT_CONTRACTS) {
-                try {
-                    const nftContract = new ethers.Contract(
-                        nftConfig.address,
-                        [
-                            'function balanceOf(address owner) view returns (uint256)',
-                            'function name() view returns (string)'
-                        ],
-                        provider
-                    );
-                    
-                    // Отримуємо баланс NFT для цього контракту
-                    const nftBalance = await nftContract.balanceOf(address);
-                    const nftCount = parseInt(nftBalance.toString());
-                    
-                    if (nftCount > 0) {
-                        console.log(`🖼️ ${colors.cyan(`${nftConfig.name || 'NFT'}:`)} ${colors.yellow(nftCount)}`);
-                    }
-                    
-                    // Додаємо до загальної кількості
-                    totalNFTs += nftCount;
-                } catch (error) {
-                    // Ігноруємо помилки для окремих контрактів
+        // Завантажуємо кеш, якщо він увімкнений
+        if (config.NFT_CACHE && config.NFT_CACHE.ENABLED) {
+            try {
+                const fs = require('fs');
+                if (fs.existsSync(config.NFT_CACHE.CACHE_FILE)) {
+                    const cacheData = fs.readFileSync(config.NFT_CACHE.CACHE_FILE, 'utf8');
+                    nftCache = JSON.parse(cacheData);
                 }
+            } catch (cacheError) {
+                console.log(`ℹ️ ${colors.yellow('Помилка завантаження кешу NFT, використовуємо порожній кеш')}`);
             }
-        } else {
-            console.log(`ℹ️ ${colors.cyan('Немає налаштованих NFT контрактів для відстеження')}`);
         }
         
-        return totalNFTs;
+        // Перевіряємо чи є гаманець у кеші
+        const normalizedAddress = address.toLowerCase();
+        if (nftCache[normalizedAddress]) {
+            const cachedData = nftCache[normalizedAddress];
+            
+            for (const collection of cachedData.collections) {
+                const idsText = collection.ids && collection.ids.length > 0 ? ` (${collection.ids.join(', ')})` : '';
+                console.log(`🖼️ ${colors.cyan(`${collection.name}:`)} ${colors.yellow(collection.count)}${idsText}`);
+            }
+            
+            return cachedData.count;
+        }
+        
+        // Якщо у кеші нема даних, повертаємо 0
+        return 0;
     } catch (error) {
-        console.log(`❌ Помилка отримання кількості NFT: ${error.message}`.red);
+        console.log(`❌ ${colors.red(`Помилка при перевірці NFT: ${error.message}`)}`);
         return 0;
     }
 }

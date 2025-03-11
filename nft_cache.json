@@ -1,0 +1,18 @@
+{
+  "0xd1ae3ea6e2f5ea443427b0c6bfcd1b0dad68289e": {
+    "count": 7,
+    "collections": [
+      { "name": "Nad Name Service (ERC721)", "count": 3, "ids": ["#2648996", "#219654", "#954431"] },
+      { "name": "Demask Collection (ERC721)", "count": 2, "ids": ["#14514", "#14627"] },
+      { "name": "Monad Hog (ERC721)", "count": 1, "ids": ["#44676"] },
+      { "name": "Nads (ERC721)", "count": 1 }
+    ]
+  },
+  "0x50e243a501c3c60871107ed9383118e66d087f7d": {
+    "count": 3,
+    "collections": [
+      { "name": "Nad Name Service (ERC721)", "count": 2, "ids": ["#288330", "#2088416"] },
+      { "name": "Purple is in the Air (ERC1155)", "count": 1, "ids": ["#0"] }
+    ]
+  }
+} 
