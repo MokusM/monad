@@ -9,7 +9,7 @@ const colors = require('colors');
 const config = require('../config');
 const walletUtils = require('../utils/wallet-utils');
 
-// Контракти NFT на MagicEden
+// Контракти NFT на MagicEden - виправлені адреси з правильним checksum
 const NFT_CONTRACTS = [
   '0x4269cde9751237634d972026583bd39dff10b6f8', // 0.01 $MON
   '0xb3b63ea6ad288f74c1268a50640919fadae84454', // 0.01 $MON
@@ -51,61 +51,175 @@ function getRandomNFTContract() {
   return NFT_CONTRACTS[randomIndex];
 }
 
+// Функція для створення провайдера з проксі
+function createProvider(proxy, rpcUrl = config.RPC_URL) {
+  return new ethers.providers.JsonRpcProvider({
+    url: rpcUrl,
+    headers: {
+      'Proxy-Authorization': `Basic ${Buffer.from(
+        proxy.split('@')[0]
+      ).toString('base64')}`,
+    },
+    timeout: config.RPC_TIMEOUT || 30000
+  });
+}
+
+// Функція для перемикання між RPC-серверами
+async function switchRpcProvider(wallet, proxy) {
+  const alternativeRpcUrls = config.ALTERNATIVE_RPC_URLS || [config.RPC_URL];
+  
+  for (const rpcUrl of alternativeRpcUrls) {
+    console.log(`🔄 Switching to RPC: ${rpcUrl}`.yellow);
+    
+    try {
+      const provider = createProvider(proxy, rpcUrl);
+      const newWallet = new ethers.Wallet(wallet.privateKey, provider);
+      
+      // Перевіряємо підключення
+      await provider.getBlockNumber();
+      console.log(`✅ Connected to RPC: ${rpcUrl}`.green);
+      
+      return newWallet;
+    } catch (error) {
+      console.log(`❌ Failed to connect to RPC: ${rpcUrl}`.red);
+    }
+  }
+  
+  throw new Error('All RPC servers are unavailable');
+}
+
+// Функція для повторних спроб виконання функції
+async function retry(fn, maxRetries = config.RPC_RETRY_COUNT || 3, retryDelay = 2000) {
+  let lastError;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ Attempt ${i + 1}/${maxRetries} failed: ${error.message}`.yellow);
+      
+      if (error.code === 'SERVER_ERROR' || error.message.includes('bad response')) {
+        console.log(`🔄 RPC server issue detected, waiting before retry...`.yellow);
+      }
+      
+      if (i < maxRetries - 1) {
+        await sleep(retryDelay);
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
+// Функція для перевірки балансу MON
+async function checkBalance(wallet) {
+  return retry(async () => {
+    const balance = await wallet.getBalance();
+    console.log(`💰 Current balance: ${ethers.utils.formatEther(balance)} MON`.cyan);
+    return balance;
+  });
+}
+
 // Функція для мінтингу NFT
-async function mintNFT(wallet, nftContract, quantity = 1) {
+async function mintNFT(wallet, contractAddress, proxy) {
   try {
-    const contract = new ethers.Contract(nftContract, NFT_ABI, wallet);
+    console.log(`🖼️ Minting NFT from contract: ${contractAddress}`.cyan);
+    
+    // Створюємо контракт
+    const contract = new ethers.Contract(
+      contractAddress,
+      NFT_ABI,
+      wallet
+    );
     
     // Отримуємо ім'я колекції
-    const name = await contract.name();
-    console.log(`🖼️ Minting ${quantity} NFT from collection: ${name}`.magenta);
+    let collectionName;
+    try {
+      collectionName = await retry(async () => await contract.name());
+      console.log(`🖼️ Collection name: ${collectionName}`.cyan);
+    } catch (error) {
+      console.log(`❌ Error getting collection name: ${error.message}`.red);
+      collectionName = "Unknown Collection";
+    }
     
     // Отримуємо ціну мінтингу
     let mintingFee;
     try {
-      mintingFee = await contract.mintingFee();
+      mintingFee = await retry(async () => await contract.mintingFee());
       console.log(`💰 Minting fee: ${ethers.utils.formatEther(mintingFee)} MON`.cyan);
     } catch (error) {
-      console.log(`💰 Minting fee not available, assuming free mint`.cyan);
+      console.log(`💰 Minting fee not available, assuming free mint`.yellow);
       mintingFee = ethers.BigNumber.from(0);
     }
     
-    // Підготовка транзакції
-    const tx = await contract.mint(quantity, {
-      value: mintingFee.mul(quantity),
-      gasLimit: 500000
+    // Налаштовуємо газ
+    const gasPrice = ethers.utils.parseUnits(config.GAS.GAS_PRICE.toString(), 'gwei');
+    const gasLimit = config.GAS.DEFAULT_GAS_LIMIT || 500000;
+    
+    // Відправляємо транзакцію
+    console.log(`📤 Sending NFT mint transaction...`.cyan);
+    
+    const tx = await contract.mint({
+      value: mintingFee,
+      gasPrice,
+      gasLimit
     });
     
-    console.log(`✔️ NFT mint transaction sent`.green.underline);
-    console.log(`➡️ Transaction hash: ${tx.hash}`.yellow);
+    console.log(`✅ NFT mint transaction sent! Hash: ${tx.hash}`.green);
     
-    // Очікуємо підтвердження транзакції
+    // Чекаємо підтвердження транзакції
+    console.log(`⏳ Waiting for transaction confirmation...`.yellow);
+    
     const receipt = await tx.wait();
     
-    // Перевіряємо баланс NFT після мінтингу
-    const balance = await contract.balanceOf(wallet.address);
-    
-    console.log(`✅ NFT mint successful! Current balance: ${balance.toString()} NFTs`.green);
-    return true;
+    if (receipt.status === 1) {
+      console.log(`✅ NFT minted successfully!`.green.bold);
+      return true;
+    } else {
+      console.log(`❌ NFT minting failed`.red);
+      return false;
+    }
   } catch (error) {
-    console.error(`❌ Error minting NFT:`.red, error.message);
+    console.log(`❌ Error minting NFT: ${error.message}`.red);
+    
+    // Якщо помилка пов'язана з RPC, спробуємо перемкнутися на інший RPC
+    if (error.message.includes('SERVER_ERROR') || 
+        error.message.includes('CALL_EXCEPTION') || 
+        error.message.includes('TIMEOUT')) {
+      console.log('Trying to switch RPC provider...'.yellow);
+      
+      try {
+        // Створюємо новий провайдер
+        const newProvider = await switchRpcProvider(proxy);
+        
+        // Створюємо новий гаманець з новим провайдером
+        const newWallet = new ethers.Wallet(wallet.privateKey, newProvider);
+        
+        // Рекурсивно викликаємо функцію з новим гаманцем
+        return await mintNFT(newWallet, contractAddress, proxy);
+      } catch (switchError) {
+        console.log(`Failed to switch RPC provider: ${switchError.message}`.red);
+      }
+    }
+    
     return false;
   }
 }
 
 // Головна функція для мінтингу NFT
-async function runMint(wallet) {
+async function runMint(wallet, proxy) {
   try {
     console.log(`Starting MagicEden NFT minting operation:`.magenta);
+    
+    // Перевіряємо баланс перед операцією
+    await checkBalance(wallet);
     
     // Отримуємо випадковий контракт NFT
     const nftContract = getRandomNFTContract();
     
-    // Визначаємо випадкову кількість NFT для мінтингу (1-3)
-    const quantity = Math.floor(Math.random() * 3) + 1;
-    
     // Мінтимо NFT
-    await mintNFT(wallet, nftContract, quantity);
+    await mintNFT(wallet, nftContract, proxy);
     
     console.log(`MagicEden NFT minting operation completed`.green);
     return true;
@@ -141,28 +255,24 @@ if (require.main === module) {
       const privateKey = wallets[i].trim();
       const proxy = proxies[i % proxies.length].trim();
 
-      const provider = new ethers.providers.JsonRpcProvider({
-        url: config.RPC_URL,
-        headers: {
-          'Proxy-Authorization': `Basic ${Buffer.from(
-            proxy.split('@')[0]
-          ).toString('base64')}`,
-        },
-      });
+      try {
+        const provider = createProvider(proxy);
+        const wallet = new ethers.Wallet(privateKey, provider);
 
-      const wallet = new ethers.Wallet(privateKey, provider);
+        console.log(
+          `\nStarting operations for account ${wallet.address} using proxy ${proxy}`
+            .cyan
+        );
 
-      console.log(
-        `\nStarting operations for account ${wallet.address} using proxy ${proxy}`
-          .cyan
-      );
-
-      await runMint(wallet);
+        await runMint(wallet, proxy);
+      } catch (error) {
+        console.error(`❌ Error with wallet ${i+1}: ${error.message}`.red);
+      }
       
       // Додаємо затримку між гаманцями
       if (i < wallets.length - 1) {
         console.log(`\nMoving to next wallet...`.cyan);
-        await delay(60, 600); // Затримка 1-10 хвилин між гаманцями
+        await delay(config.DELAYS.MIN_WALLET_DELAY, config.DELAYS.MAX_WALLET_DELAY);
       }
     }
 

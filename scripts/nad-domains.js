@@ -9,17 +9,22 @@ const colors = require('colors');
 const config = require('../config');
 const walletUtils = require('../utils/wallet-utils');
 
-// Контракт Nad Domains
-const NAD_DOMAINS_CONTRACT = '0x2Cc8342d7c8BFf5A213857A90a6Bf5f557Ae2647';
+// Адреса контракту Nad Domains
+const NAD_DOMAINS_CONTRACT = '0x3019BF1dfB84E5b46Ca9D0eEC37dE08a59A41308';
 
-// ABI для реєстрації доменів
+// ABI контракту Nad Domains
 const NAD_DOMAINS_ABI = [
-  'function register(string memory name, uint256 duration) external payable',
-  'function price(string memory name, uint256 duration) external view returns (uint256)',
-  'function available(string memory name) external view returns (bool)',
-  'function balanceOf(address owner) external view returns (uint256)',
-  'function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256)',
-  'function getName(uint256 tokenId) external view returns (string memory)'
+  // Функція для перевірки доступності домену
+  "function isAvailable(string name) view returns (bool)",
+  
+  // Функція для отримання ціни домену
+  "function price(string name, uint256 duration) view returns (uint256)",
+  
+  // Функція для реєстрації домену
+  "function register(string name, uint256 duration) payable returns (uint256)",
+  
+  // Функція для отримання кількості доменів у гаманця
+  "function balanceOf(address owner) view returns (uint256)"
 ];
 
 // Функція для створення затримки
@@ -40,6 +45,75 @@ async function delay(min = config.DELAYS.MIN_DELAY, max = config.DELAYS.MAX_DELA
   console.log(`✅ Delay completed`.green);
 }
 
+// Функція для створення провайдера з проксі
+function createProvider(proxy, rpcUrl = config.RPC_URL) {
+  return new ethers.providers.JsonRpcProvider({
+    url: rpcUrl,
+    headers: {
+      'Proxy-Authorization': `Basic ${Buffer.from(
+        proxy.split('@')[0]
+      ).toString('base64')}`,
+    },
+    timeout: config.RPC_TIMEOUT || 30000
+  });
+}
+
+// Функція для перемикання між RPC-серверами
+async function switchRpcProvider(proxy) {
+  const alternativeRpcUrls = config.ALTERNATIVE_RPC_URLS || [config.RPC_URL];
+  
+  for (const rpcUrl of alternativeRpcUrls) {
+    console.log(`🔄 Switching to RPC: ${rpcUrl}`.yellow);
+    
+    try {
+      const provider = createProvider(proxy, rpcUrl);
+      
+      // Перевіряємо підключення
+      await provider.getBlockNumber();
+      console.log(`✅ Connected to RPC: ${rpcUrl}`.green);
+      
+      return provider;
+    } catch (error) {
+      console.log(`❌ Failed to connect to RPC: ${rpcUrl}`.red);
+    }
+  }
+  
+  throw new Error('All RPC servers are unavailable');
+}
+
+// Функція для повторних спроб виконання функції
+async function retry(fn, maxRetries = config.RPC_RETRY_COUNT || 3, retryDelay = 2000) {
+  let lastError;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      console.log(`⚠️ Attempt ${i + 1}/${maxRetries} failed: ${error.message}`.yellow);
+      
+      if (error.code === 'SERVER_ERROR' || error.message.includes('bad response')) {
+        console.log(`🔄 RPC server issue detected, waiting before retry...`.yellow);
+      }
+      
+      if (i < maxRetries - 1) {
+        await sleep(retryDelay);
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
+// Функція для перевірки балансу MON
+async function checkBalance(wallet) {
+  return retry(async () => {
+    const balance = await wallet.getBalance();
+    console.log(`💰 Current balance: ${ethers.utils.formatEther(balance)} MON`.cyan);
+    return balance;
+  });
+}
+
 // Функція для генерації випадкового імені домену
 function generateRandomDomainName(length = 8) {
   const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -51,155 +125,196 @@ function generateRandomDomainName(length = 8) {
 }
 
 // Функція для перевірки доступності домену
-async function checkDomainAvailability(contract, domainName) {
+async function checkDomainAvailability(wallet, domainName, proxy) {
   try {
-    const isAvailable = await contract.available(domainName);
-    return isAvailable;
+    console.log(`Checking if domain ${domainName}.nad is available...`.cyan);
+    
+    // Створюємо контракт
+    const contract = new ethers.Contract(
+      NAD_DOMAINS_CONTRACT,
+      NAD_DOMAINS_ABI,
+      wallet
+    );
+    
+    // Перевіряємо доступність домену
+    const isAvailable = await contract.isAvailable(domainName);
+    
+    if (isAvailable) {
+      console.log(`Domain ${domainName}.nad is available!`.green);
+      return true;
+    } else {
+      console.log(`Domain ${domainName}.nad is already taken.`.yellow);
+      return false;
+    }
   } catch (error) {
-    console.error(`❌ Error checking domain availability:`.red, error.message);
+    console.log(`Error checking domain availability: ${error.message}`.red);
+    
+    // Якщо помилка пов'язана з RPC, спробуємо перемкнутися на інший RPC
+    if (error.message.includes('SERVER_ERROR') || 
+        error.message.includes('CALL_EXCEPTION') || 
+        error.message.includes('TIMEOUT')) {
+      console.log('Trying to switch RPC provider...'.yellow);
+      
+      try {
+        // Створюємо новий провайдер
+        const newProvider = await switchRpcProvider(proxy);
+        
+        // Створюємо новий гаманець з новим провайдером
+        const newWallet = new ethers.Wallet(wallet.privateKey, newProvider);
+        
+        // Рекурсивно викликаємо функцію з новим гаманцем
+        return await checkDomainAvailability(newWallet, domainName, proxy);
+      } catch (switchError) {
+        console.log(`Failed to switch RPC provider: ${switchError.message}`.red);
+      }
+    }
+    
     return false;
   }
 }
 
-// Функція для отримання ціни реєстрації домену
-async function getDomainPrice(contract, domainName, duration) {
+// Функція для отримання ціни домену
+async function getDomainPrice(wallet, domainName, registrationYears = 1) {
   try {
-    const price = await contract.price(domainName, duration);
+    console.log(`Getting price for domain ${domainName}.nad for ${registrationYears} year(s)...`.cyan);
+    
+    // Створюємо контракт
+    const contract = new ethers.Contract(
+      NAD_DOMAINS_CONTRACT,
+      NAD_DOMAINS_ABI,
+      wallet
+    );
+    
+    // Отримуємо ціну домену
+    const price = await contract.price(domainName, registrationYears);
+    
+    console.log(`Price for ${domainName}.nad for ${registrationYears} year(s): ${ethers.utils.formatEther(price)} MON`.cyan);
+    
     return price;
   } catch (error) {
-    console.error(`❌ Error getting domain price:`.red, error.message);
+    console.log(`Error getting domain price: ${error.message}`.red);
+    
+    // Якщо помилка пов'язана з RPC, спробуємо перемкнутися на інший RPC
+    if (error.message.includes('SERVER_ERROR') || 
+        error.message.includes('CALL_EXCEPTION') || 
+        error.message.includes('TIMEOUT')) {
+      console.log('Trying to switch RPC provider...'.yellow);
+      
+      try {
+        // Створюємо новий провайдер
+        const newProvider = await switchRpcProvider(proxy);
+        
+        // Створюємо новий гаманець з новим провайдером
+        const newWallet = new ethers.Wallet(wallet.privateKey, newProvider);
+        
+        // Рекурсивно викликаємо функцію з новим гаманцем
+        return await getDomainPrice(newWallet, domainName, registrationYears);
+      } catch (switchError) {
+        console.log(`Failed to switch RPC provider: ${switchError.message}`.red);
+      }
+    }
+    
     return ethers.BigNumber.from(0);
   }
 }
 
 // Функція для реєстрації домену
-async function registerDomain(wallet, domainName, duration = 365) {
+async function registerDomain(wallet, domainName, registrationYears = 1, proxy) {
   try {
-    const contract = new ethers.Contract(NAD_DOMAINS_CONTRACT, NAD_DOMAINS_ABI, wallet);
+    console.log(`Registering domain ${domainName}.nad for ${registrationYears} year(s)...`.cyan);
     
     // Перевіряємо доступність домену
-    const isAvailable = await checkDomainAvailability(contract, domainName);
+    const isAvailable = await checkDomainAvailability(wallet, domainName, proxy);
+    
     if (!isAvailable) {
-      console.log(`🔴 Domain ${domainName}.nad is not available`.red);
+      console.log(`Cannot register domain ${domainName}.nad as it is not available.`.red);
       return false;
     }
     
-    console.log(`🟢 Domain ${domainName}.nad is available`.green);
+    // Отримуємо ціну домену
+    const price = await getDomainPrice(wallet, domainName, registrationYears);
     
-    // Отримуємо ціну реєстрації
-    const price = await getDomainPrice(contract, domainName, duration);
-    console.log(`💰 Registration price for ${duration} days: ${ethers.utils.formatEther(price)} MON`.cyan);
-    
-    // Підготовка транзакції
-    const tx = await contract.register(domainName, duration, {
-      value: price,
-      gasLimit: 500000
-    });
-    
-    console.log(`✔️ Domain registration transaction sent`.green.underline);
-    console.log(`➡️ Transaction hash: ${tx.hash}`.yellow);
-    
-    // Очікуємо підтвердження транзакції
-    const receipt = await tx.wait();
-    
-    // Перевіряємо баланс доменів після реєстрації
-    const balance = await contract.balanceOf(wallet.address);
-    
-    console.log(`✅ Domain registration successful! Current balance: ${balance.toString()} domains`.green);
-    
-    // Виводимо інформацію про зареєстровані домени
-    if (balance.gt(0)) {
-      const lastTokenId = await contract.tokenOfOwnerByIndex(wallet.address, balance.sub(1));
-      const domainName = await contract.getName(lastTokenId);
-      console.log(`🌐 Last registered domain: ${domainName}.nad`.cyan);
+    if (price.eq(0)) {
+      console.log(`Failed to get price for domain ${domainName}.nad`.red);
+      return false;
     }
     
-    return true;
-  } catch (error) {
-    console.error(`❌ Error registering domain:`.red, error.message);
-    return false;
-  }
-}
-
-// Головна функція для реєстрації домену
-async function runDomainRegistration(wallet) {
-  try {
-    console.log(`Starting Nad Domains registration operation:`.magenta);
+    // Перевіряємо баланс гаманця
+    const balance = await wallet.getBalance();
     
-    // Генеруємо випадкове ім'я домену
-    const domainName = generateRandomDomainName();
-    console.log(`🌐 Generated domain name: ${domainName}.nad`.cyan);
+    if (balance.lt(price)) {
+      console.log(`Insufficient balance to register domain ${domainName}.nad`.red);
+      console.log(`Required: ${ethers.utils.formatEther(price)} MON, Available: ${ethers.utils.formatEther(balance)} MON`.red);
+      return false;
+    }
     
-    // Визначаємо тривалість реєстрації (від 30 до 365 днів)
-    const duration = Math.floor(Math.random() * (365 - 30 + 1)) + 30;
-    console.log(`⏱️ Registration duration: ${duration} days`.cyan);
+    // Створюємо контракт
+    const contract = new ethers.Contract(
+      NAD_DOMAINS_CONTRACT,
+      NAD_DOMAINS_ABI,
+      wallet
+    );
+    
+    // Налаштовуємо газ
+    const gasPrice = ethers.utils.parseUnits(config.GAS.GAS_PRICE || "1.5", 'gwei');
+    const gasLimit = config.GAS.DEFAULT_GAS_LIMIT || 500000;
     
     // Реєструємо домен
-    await registerDomain(wallet, domainName, duration);
+    console.log(`Sending transaction to register domain ${domainName}.nad...`.cyan);
     
-    console.log(`Nad Domains registration operation completed`.green);
-    return true;
+    const tx = await contract.register(
+      domainName,
+      registrationYears,
+      {
+        value: price,
+        gasPrice,
+        gasLimit
+      }
+    );
+    
+    console.log(`Transaction sent! Hash: ${tx.hash}`.green);
+    
+    // Чекаємо підтвердження транзакції
+    console.log('Waiting for transaction confirmation...'.yellow);
+    
+    const receipt = await tx.wait();
+    
+    if (receipt.status === 1) {
+      console.log(`Domain ${domainName}.nad successfully registered!`.green.bold);
+      return true;
+    } else {
+      console.log(`Failed to register domain ${domainName}.nad`.red);
+      return false;
+    }
   } catch (error) {
-    console.error(`❌ Nad Domains registration operation failed: ${error.message}`.red);
+    console.log(`Error registering domain: ${error.message}`.red);
+    
+    // Якщо помилка пов'язана з RPC, спробуємо перемкнутися на інший RPC
+    if (error.message.includes('SERVER_ERROR') || 
+        error.message.includes('CALL_EXCEPTION') || 
+        error.message.includes('TIMEOUT')) {
+      console.log('Trying to switch RPC provider...'.yellow);
+      
+      try {
+        // Створюємо новий провайдер
+        const newProvider = await switchRpcProvider(proxy);
+        
+        // Створюємо новий гаманець з новим провайдером
+        const newWallet = new ethers.Wallet(wallet.privateKey, newProvider);
+        
+        // Рекурсивно викликаємо функцію з новим гаманцем
+        return await registerDomain(newWallet, domainName, registrationYears, proxy);
+      } catch (switchError) {
+        console.log(`Failed to switch RPC provider: ${switchError.message}`.red);
+      }
+    }
+    
     return false;
   }
 }
 
-// Експортуємо функцію для використання в головному файлі
 module.exports = {
-  runDomainRegistration
+  checkDomainAvailability,
+  getDomainPrice,
+  registerDomain
 };
-
-// Якщо скрипт запущено напряму, виконуємо основну функцію
-if (require.main === module) {
-  // Отримуємо гаманці з конфігурації
-  const wallets = config.WALLETS;
-  
-  // Отримуємо проксі з конфігурації
-  const proxies = config.PROXIES;
-
-  if (wallets.length === 0 || proxies.length === 0) {
-    console.error('Please ensure WALLETS and PROXIES are configured in config.js'.red);
-    process.exit(1);
-  }
-
-  async function main() {
-    console.log(`Starting Nad Domains registration operations for all accounts...`);
-
-    // Виконуємо операції для кожного гаманця
-    for (let i = 0; i < wallets.length; i++) {
-      const privateKey = wallets[i].trim();
-      const proxy = proxies[i % proxies.length].trim();
-
-      const provider = new ethers.providers.JsonRpcProvider({
-        url: config.RPC_URL,
-        headers: {
-          'Proxy-Authorization': `Basic ${Buffer.from(
-            proxy.split('@')[0]
-          ).toString('base64')}`,
-        },
-      });
-
-      const wallet = new ethers.Wallet(privateKey, provider);
-
-      console.log(
-        `\nStarting operations for account ${wallet.address} using proxy ${proxy}`
-          .cyan
-      );
-
-      await runDomainRegistration(wallet);
-      
-      // Додаємо затримку між гаманцями
-      if (i < wallets.length - 1) {
-        console.log(`\nMoving to next wallet...`.cyan);
-        await delay(60, 600); // Затримка 1-10 хвилин між гаманцями
-      }
-    }
-
-    console.log(`\nAll operations completed successfully!`.green.bold);
-  }
-
-  main().catch((error) => {
-    console.error('Error occurred:', error);
-  });
-} 
